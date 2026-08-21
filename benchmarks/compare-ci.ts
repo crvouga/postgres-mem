@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { BenchReport } from "./harness/types.ts";
+import { RELIABLE_PERCENTILE_MIN_SAMPLES, type BenchReport, type BenchResult } from "./harness/types.ts";
 
 const root = path.resolve(import.meta.dir);
 const baselinePath = process.argv[2] ?? path.join(root, "results/ci-baseline.json");
@@ -28,18 +28,26 @@ if (basePlatform && currentPlatform && basePlatform !== currentPlatform) {
 }
 const p95Factor = Number(process.env.BENCH_REGRESSION_FACTOR ?? 2.5);
 const medianFactor = Number(process.env.BENCH_REGRESSION_MEDIAN ?? 1.5);
+
+function unreliablePercentiles(result: BenchResult): boolean {
+  return result.reliablePercentiles === false || result.iterations < RELIABLE_PERCENTILE_MIN_SAMPLES;
+}
+
 const currentByKey = new Map(current.results.map((result) => [`${result.engine}::${result.name}`, result]));
 const p95Regressions: string[] = [];
 const medianRegressions: string[] = [];
 for (const base of baseline.results) {
   const match = currentByKey.get(`${base.engine}::${base.name}`);
   if (!match) continue;
-  // Sub-ms benches on shared runners routinely swing several× on both median
-  // and p95; skip ratio gates there. Also require a 2ms absolute p95 delta so
-  // tiny baselines (e.g. 0.3ms → 0.9ms) do not fail closed on scheduler noise.
-  const noisy = base.p50 < 1 && base.p95 < 2;
+  // n<5: p50/p95 are one sample (insert benches). Ratio gates flake; absolute
+  // budgets in check-budgets.ts still catch blowups.
+  const unreliable = unreliablePercentiles(base) || unreliablePercentiles(match);
+  // Sub-ms: skip both ratio gates. Few-ms micros (insert ~6ms, subquery ~3ms)
+  // routinely 1.5–2× on shared GHA; skip median, keep 2.5× p95.
+  const skipAllRatios = unreliable || (base.p50 < 1 && base.p95 < 2);
+  const skipMedian = skipAllRatios || (base.p50 < 12 && base.p95 < 25);
   if (
-    !noisy &&
+    !skipAllRatios &&
     base.p95 > 0 &&
     !(base.p95 < 0.05 && match.p95 < 0.2) &&
     match.p95 > base.p95 * p95Factor &&
@@ -50,18 +58,15 @@ for (const base of baseline.results) {
     );
   }
   if (
+    !skipMedian &&
     base.p50 > 0 &&
     !(base.p50 < 0.05 && match.p50 < 0.2) &&
     match.p50 > base.p50 * medianFactor &&
-    // Match the p95 absolute floor so ~1ms benches do not fail closed on a
-    // 1.5× swing that is still only ~1–2ms of wall-clock noise on GHA.
     match.p50 - base.p50 >= 2
   ) {
-    if (!noisy) {
-      medianRegressions.push(
-        `${base.engine} ${base.name}: median ${base.p50.toFixed(3)}ms → ${match.p50.toFixed(3)}ms (${(match.p50 / base.p50).toFixed(2)}×)`,
-      );
-    }
+    medianRegressions.push(
+      `${base.engine} ${base.name}: median ${base.p50.toFixed(3)}ms → ${match.p50.toFixed(3)}ms (${(match.p50 / base.p50).toFixed(2)}×)`,
+    );
   }
 }
 
