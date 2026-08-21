@@ -22,6 +22,23 @@ import type { BindValue, JsValue, QueryRow } from "./bind.ts";
 import { captureSnapshot, type Snapshot } from "./snapshot.ts";
 import { Statement } from "./statement.ts";
 
+const ADOPT = Symbol("postgres-mem.adopt");
+
+interface AdoptedDatabase {
+  readonly [ADOPT]: true;
+  readonly state: DatabaseState;
+  readonly prng: Prng;
+  readonly now: Clock;
+  readonly seed: number | bigint;
+  readonly randomMode: RandomMode;
+  readonly systemClock: boolean;
+  readonly int8Mode: Int8Mode;
+}
+
+function isAdopted(value: object): value is AdoptedDatabase {
+  return ADOPT in value;
+}
+
 /**
  * Pure TypeScript in-memory PostgreSQL database.
  *
@@ -40,23 +57,6 @@ import { Statement } from "./statement.ts";
  * const users = db.query<{ id: number; name: string }>("SELECT * FROM users");
  * ```
  */
-const ADOPT = Symbol("postgres-mem.adopt");
-
-interface AdoptedDatabase {
-  readonly [ADOPT]: true;
-  readonly state: DatabaseState;
-  readonly prng: Prng;
-  readonly now: Clock;
-  readonly seed: number | bigint;
-  readonly randomMode: RandomMode;
-  readonly systemClock: boolean;
-  readonly int8Mode: Int8Mode;
-}
-
-function isAdopted(value: object): value is AdoptedDatabase {
-  return ADOPT in value;
-}
-
 export class Database {
   /** @internal Engine catalog, tables, session settings. */
   readonly state: DatabaseState;
