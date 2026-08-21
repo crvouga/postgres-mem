@@ -133,6 +133,8 @@ runCatalog(FUN_SECTION, [
     id: "FUN-sqrt-01",
     kind: "parity",
     sql: "SELECT sqrt(16::float8) AS f, sqrt(2::numeric) AS n, cbrt(27::float8) AS c, cbrt(-8) AS neg",
+    // Native libm cbrt(27) prints 3.0000000000000004; JS Math.cbrt is exact 3.
+    options: { realEpsilon: 1e-12 },
   },
   { id: "FUN-sqrt-02", kind: "error", sql: "SELECT sqrt(-1::float8)", query: true, messageTier: "A" },
   {

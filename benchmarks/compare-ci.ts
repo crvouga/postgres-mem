@@ -49,7 +49,14 @@ for (const base of baseline.results) {
       `${base.engine} ${base.name}: p95 ${base.p95.toFixed(3)}ms → ${match.p95.toFixed(3)}ms (${(match.p95 / base.p95).toFixed(2)}×)`,
     );
   }
-  if (base.p50 > 0 && !(base.p50 < 0.05 && match.p50 < 0.2) && match.p50 > base.p50 * medianFactor) {
+  if (
+    base.p50 > 0 &&
+    !(base.p50 < 0.05 && match.p50 < 0.2) &&
+    match.p50 > base.p50 * medianFactor &&
+    // Match the p95 absolute floor so ~1ms benches do not fail closed on a
+    // 1.5× swing that is still only ~1–2ms of wall-clock noise on GHA.
+    match.p50 - base.p50 >= 2
+  ) {
     if (!noisy) {
       medianRegressions.push(
         `${base.engine} ${base.name}: median ${base.p50.toFixed(3)}ms → ${match.p50.toFixed(3)}ms (${(match.p50 / base.p50).toFixed(2)}×)`,

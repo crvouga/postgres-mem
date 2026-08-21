@@ -116,7 +116,7 @@ async function main(): Promise<void> {
       POSTGRES_MEM_ORACLE: "server",
       POSTGRES_MEM_ORACLE_URL: url,
     });
-    process.exitCode = code;
+    process.exitCode = code === 0 ? 0 : code || 1;
   } finally {
     if (embedded) {
       try {
@@ -129,9 +129,12 @@ async function main(): Promise<void> {
       await rm(databaseDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
+
+  // Force a hard exit so a non-zero exitCode cannot be swallowed after async teardown.
+  process.exit(process.exitCode ?? 0);
 }
 
 main().catch((error) => {
   console.error(error);
-  process.exitCode = 1;
+  process.exit(1);
 });
