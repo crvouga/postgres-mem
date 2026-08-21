@@ -6,7 +6,7 @@ Pure TypeScript, completely in-memory PostgreSQL implementation aiming for **Pos
 - **Zero** WASM, native bindings, workers, or filesystem dependencies
 - Entire database stored in memory
 - **Synchronous** ESM-only API (no Promises, no `require`)
-- **SQL dialect verified** against real PostgreSQL 18.3 (PGlite) via differential contracts + fail-closed gate
+- **SQL dialect verified** against real PostgreSQL 18.3 (PGlite by default; optional native server via `test:postgres-native`) via differential contracts + fail-closed gate
 - **Not** a drop-in for `pg` / `postgres.js` client APIs, the wire protocol, or on-disk clusters
 - Intentional differences: deterministic `random()` / `now()` by default, and a custom snapshot format (not `pg_dump`)
 
@@ -254,7 +254,7 @@ Working examples beyond this README: `examples/react-vite`, `tests/contract/api/
 
 Requires [Bun](https://bun.sh). For architecture, change checklists, and how to add contract tests, see **[AGENTS.md](AGENTS.md)**.
 
-Parity is proven only by differential contracts against real PostgreSQL (PGlite, Postgres 18.3 in WASM). Isolated internal unit tests are not PostgreSQL compatibility proof.
+Parity is proven by differential contracts against real PostgreSQL — default oracle PGlite (18.3 in WASM), plus optional native PostgreSQL 18.3 via `bun run test:postgres-native`. Isolated internal unit tests are not PostgreSQL compatibility proof.
 
 ```bash
 bun install
@@ -263,7 +263,8 @@ bun run check                  # format + lint + typecheck + postgres-compat sui
 bun run format                 # write Biome formatting
 bun run lint                   # Biome lint
 bun run typecheck
-bun run test:postgres-compat   # requirements + inventory gate + differential suite
+bun run test:postgres-compat   # requirements + inventory gate + differential suite (PGlite)
+bun run test:postgres-native   # same differential suite vs real PostgreSQL 18.3
 bun test                       # contract + fuzz + harness
 bun run build
 ```

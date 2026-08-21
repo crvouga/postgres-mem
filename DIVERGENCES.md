@@ -6,7 +6,7 @@ Generated: 2026-08-21 · 18 entries
 
 | ID | Scope | Predicate | Pinned by |
 | --- | --- | --- | --- |
-| `oracle-pglite-version` | oracle | The differential oracle is PGlite (embedded PostgreSQL 18.x WASM); server_version must be 18.3 or 18.1 | `scripts/postgres-compat-gate.ts`, `tests/harness/oracle-versions.ts` |
+| `oracle-pglite-version` | oracle | The default differential oracle is PGlite (embedded PostgreSQL 18.x WASM); a secondary native-server oracle is available via POSTGRES_MEM_ORACLE=server. server_version must be 18.3 or 18.1 for either path. | `scripts/postgres-compat-gate.ts`, `tests/harness/oracle-versions.ts`, `scripts/run-postgres-native-tests.ts` |
 | `deterministic-runtime` | engine | random()/gen_random_uuid() are seeded-deterministic and now() is fixed to 2000-01-01 UTC by default; both are injectable via DatabaseOptions; the PRNG participates in transaction rollback and snapshots | `DAT-now-01`, `DET-seed-01`, `DET-seed-02`, `DET-now-01`, `DET-now-02`, `DET-uuid-01`, `DET-rb-01`, `DET-snap-01`, `DET-setseed-01`, `DET-scan-01`, `tests/contract/determinism/basic.test.ts` |
 | `pgmm-snapshot-codec` | engine | snapshot()/restore() use the custom PGMM binary codec (magic 'PGMM' + LE u32 version), not pg_dump or the on-disk PostgreSQL format | `SNP-rt-01`, `SNP-rt-02`, `SNP-rt-03`, `SNP-rt-04`, `SNP-rt-05`, `SNP-byte-01`, `SNP-hdr-01`, `SNP-hdr-02`, `SNP-hdr-03`, `SNP-hdr-04`, `SNP-txn-01`, `SNP-rep-01`, `tests/contract/snapshots/basic.test.ts` |
 | `copy-stdin-api` | api | COPY ... FROM STDIN is fed through the copyFrom(sql, text) API hook and COPY ... TO STDOUT returns the rendered text from exec; PGlite exposes a different (protocol-level) COPY interface | `CPY-from-01`, `CPY-from-02`, `CPY-from-03`, `CPY-from-04`, `CPY-from-05`, `CPY-csv-01`, `CPY-csv-02`, `CPY-csv-03`, `CPY-to-01`, `CPY-to-02`, `CPY-to-03`, `CPY-to-04`, `CPY-rt-01`, `CPY-api-01`, `tests/contract/copy/basic.test.ts` |
@@ -29,7 +29,7 @@ Generated: 2026-08-21 · 18 entries
 
 ### `oracle-pglite-version`
 
-Harness bootstrap asserts current_setting('server_version') is in {18.3, 18.1}. Differential results are only meaningful against these lines.
+Harness bootstrap asserts current_setting('server_version') is in {18.3, 18.1}. Default CI uses PGlite; `bun run test:postgres-native` (and CI job test-native-oracle) runs the same suite against a real PostgreSQL 18.3 process.
 
 ### `deterministic-runtime`
 

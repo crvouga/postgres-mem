@@ -1,7 +1,7 @@
 /** Generated matrix: every binary operator applied to every pair of type-class representatives. */
 import { describe, test } from "bun:test";
 import { InMemoryAdapter } from "../../adapters/in-memory.ts";
-import { PgliteAdapter } from "../../adapters/pglite.ts";
+import { createOracleAdapter } from "../../harness/oracle.ts";
 import { deepCompareResults } from "../../harness/normalize.ts";
 import type { ContractDb } from "../../harness/types.ts";
 import { BINARY_OPS, CLASS_REPS } from "./values.ts";
@@ -20,7 +20,7 @@ async function compareCell(memory: ContractDb, postgres: ContractDb, label: stri
 describe("M1 operator × class × class", () => {
   test("literal operands for every operator and class pair", async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       for (const op of BINARY_OPS) {
         for (const left of CLASS_REPS) {
@@ -39,7 +39,7 @@ describe("M1 operator × class × class", () => {
 
   test("unary operators for every class", async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       for (const op of ["-", "+", "NOT "]) {
         for (const operand of CLASS_REPS) {

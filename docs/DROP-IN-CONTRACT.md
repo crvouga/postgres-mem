@@ -14,7 +14,7 @@ This is **not** the claim “any app can replace `pg` / `postgres.js` / PGlite b
 
 Honest product claim:
 
-> **SQL dialect drop-in** vs PostgreSQL 18.3 (oracle PGlite) for the sync `Database`/`Statement` surface documented here — **not** a drop-in for the wire protocol, async client APIs, `pg_dump` files, PL/pgSQL, extensions, or multi-session concurrency.
+> **SQL dialect drop-in** vs PostgreSQL 18.3 (default oracle PGlite; secondary native-server oracle via `bun run test:postgres-native`) for the sync `Database`/`Statement` surface documented here — **not** a drop-in for the wire protocol, async client APIs, `pg_dump` files, PL/pgSQL, extensions, or multi-session concurrency.
 
 ---
 
@@ -70,11 +70,11 @@ Implemented today in [`tests/harness/`](../tests/harness/) (`expectParity`, `dee
 
 | Oracle | Role today | Contract target |
 | --- | --- | --- |
-| **PGlite** (`@electric-sql/pglite`) | **Sole** differential oracle (`tests/adapters/pglite.ts`) | Primary — `server_version` **18.3** pinned in `tests/harness/oracle-versions.ts` + gate |
-| **Native `postgres` server** | Not wired | Secondary CI matrix (future) |
+| **PGlite** (`@electric-sql/pglite`) | **Default** differential oracle (`tests/adapters/pglite.ts`) — `bun run test:postgres-compat` | Primary — `server_version` **18.3** pinned in `tests/harness/oracle-versions.ts` + gate |
+| **Native `postgres` server** | **Secondary** oracle (`tests/adapters/postgres-server.ts`) — `bun run test:postgres-native` (embedded-postgres 18.3, or `POSTGRES_MEM_ORACLE_URL`) | Same allow-list; CI job `test-native-oracle` |
 | **`psql` text output** | Normalization reference (canonical text rendering) | Encoded in `datumText` + harness normalize |
 
-**Rule:** absence of a second oracle means bugs that happen to match PGlite quirks can be encoded as “parity.” PGlite **is** real Postgres compiled to WASM, which materially reduces (but does not eliminate) this risk vs a reimplementation oracle.
+**Rule:** Prefer catching PGlite-only quirks with the native oracle (`POSTGRES_MEM_ORACLE=server`). Default CI stays on PGlite for speed; the native suite is the second proof path. PGlite **is** real Postgres compiled to WASM, which already reduces quirk risk vs a reimplementation oracle.
 
 ---
 

@@ -101,10 +101,10 @@ Hot / large files: `parser/parser.ts`, `executor/select.ts`, `executor/dml.ts`, 
 
 | Path | Role |
 | --- | --- |
-| `tests/contract/` | Differential SQL vs PGlite (**authoritative**) |
+| `tests/contract/` | Differential SQL vs oracle (**authoritative**; default PGlite, optional native via `test:postgres-native`) |
 | `tests/fuzz/` | fast-check property tests (seeded); differential, NoREC/TLP metamorphic, stateful DST |
 | `tests/harness/` | Compare/normalize/classify helpers + harness unit tests |
-| `tests/adapters/` | Wrappers for postgres-mem and PGlite (`ContractDb`) |
+| `tests/adapters/` | Wrappers for postgres-mem, PGlite, and native Postgres (`ContractDb`) |
 | `tests/corpus/` | Fuzz regression corpus |
 | `tests/meta/` | Canary definitions, skip register |
 
@@ -124,7 +124,8 @@ POSTGRES_MEM_FUZZ_SEED=12345 POSTGRES_MEM_FUZZ_PATH='0:1' bun test tests/fuzz
 
 | Command | Role |
 | --- | --- |
-| `bun run test:postgres-compat` | Requirements + fail-closed gate + construct catalog + smoke ratchet + contract/fuzz/harness |
+| `bun run test:postgres-compat` | Requirements + fail-closed gate + construct catalog + smoke ratchet + contract/fuzz/harness (PGlite oracle) |
+| `bun run test:postgres-native` | Same differential suite vs real PostgreSQL 18.3 (embedded-postgres, or `POSTGRES_MEM_ORACLE_URL`) |
 | `bun run inventory` | Oracle `pg_proc` / `pg_operator` vs engine registries (+ `--write-register`) |
 | `bun run scenarios` | Construct-level scenario catalog (`compat/scenarios.ts`) + smoke gate |
 | `bun run requirements` | Refresh PostgreSQL 18 SQL-commands docs → `compat/requirements.json` + `compat/coverage.json` |
@@ -135,6 +136,8 @@ Statuses: **VERIFIED** / **PARTIALLY VERIFIED** / **UNSUPPORTED** / **NOT APPLIC
 **Catalog vs proof:** `tests/contract/catalog/` IDs must execute; trivial probes are tracked in `compat/smoke-baseline.json` (ratchet — no new smoke stubs). Documented divergences bind to `compat/divergences.json` (regenerate `DIVERGENCES.md` with `bun run divergences`). Generated operator/CAST matrices: `tests/contract/matrices/`. Stateful dump-after-each fuzz: `tests/fuzz/stateful.test.ts`. Oracle `server_version` must be on the allow-list in `tests/harness/oracle-versions.ts` (18.3).
 
 **PGlite quirk:** PGlite's WASM boot leaks `process.exitCode = 99` under Bun ([pglite#975](https://github.com/electric-sql/pglite/issues/975)); the adapter and scripts reset it — keep that workaround when touching `tests/adapters/pglite.ts`.
+
+**Native oracle:** `POSTGRES_MEM_ORACLE=server` + `POSTGRES_MEM_ORACLE_URL` selects `PostgresServerAdapter`. Prefer `bun run test:postgres-native` (starts embedded-postgres 18.3). Optional Docker: `docker-compose.oracle.yml`.
 
 Details: [COMPATIBILITY.md](COMPATIBILITY.md), audit: [COMPATIBILITY-AUDIT.md](COMPATIBILITY-AUDIT.md).
 
@@ -150,6 +153,7 @@ bun run format
 bun run lint
 bun run typecheck
 bun run test:postgres-compat
+bun run test:postgres-native # optional second oracle (real PostgreSQL 18.3)
 bun test # contract + fuzz + harness
 bun run build
 ```

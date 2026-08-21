@@ -1,7 +1,7 @@
 /** Generated matrix: explicit casts of edge values to every scalar cast target. */
 import { describe, test } from "bun:test";
 import { InMemoryAdapter } from "../../adapters/in-memory.ts";
-import { PgliteAdapter } from "../../adapters/pglite.ts";
+import { createOracleAdapter } from "../../harness/oracle.ts";
 import { deepCompareResults } from "../../harness/normalize.ts";
 import type { ContractDb } from "../../harness/types.ts";
 import { CAST_TARGETS, CLASS_REPS, FLOAT_EDGES, INTEGER_EDGES, NUMERIC_EDGES, TEXT_EDGES } from "./values.ts";
@@ -20,7 +20,7 @@ async function compareCast(memory: ContractDb, postgres: ContractDb, label: stri
 describe("M2 cast × value class", () => {
   test("class representatives to every cast target", async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       for (const target of CAST_TARGETS) {
         for (const rep of CLASS_REPS) {
@@ -36,7 +36,7 @@ describe("M2 cast × value class", () => {
 
   test("numeric edges to numeric targets", async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       const numericTargets = ["int2", "int4", "int8", "float4", "float8", "numeric", "numeric(6,2)", "text"];
       for (const target of numericTargets) {
@@ -53,7 +53,7 @@ describe("M2 cast × value class", () => {
 
   test("text edges to scalar targets", async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       const targets = ["int4", "int8", "float8", "numeric", "bool", "text"];
       for (const target of targets) {

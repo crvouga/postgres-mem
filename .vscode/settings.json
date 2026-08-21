@@ -1,3 +1,16 @@
 {
-  "cSpell.words": ["bunx", "commitlint", "crvouga", "SAVEPOINT", "savepoints"]
+  "cSpell.words": [
+    "bunx",
+    "commitlint",
+    "crvouga",
+    "datestyle",
+    "intervalstyle",
+    "isready",
+    "nspname",
+    "pglite",
+    "PGTZ",
+    "SAVEPOINT",
+    "savepoints",
+    "sqlstate"
+  ]
 }

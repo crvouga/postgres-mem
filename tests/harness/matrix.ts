@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
 import { InMemoryAdapter } from "../adapters/in-memory.ts";
-import { PgliteAdapter } from "../adapters/pglite.ts";
 import type { ContractDb } from "./types.ts";
+import { createOracleAdapter } from "./oracle.ts";
 
 export type Backend = "memory" | "postgres";
 
@@ -26,7 +26,7 @@ export function matrix(name: string, fn: (db: ContractDb, backend: Backend) => v
     });
 
     test("postgres", async () => {
-      const db = new PgliteAdapter();
+      const db = createOracleAdapter();
       try {
         await fn(db, "postgres");
       } catch (error) {
@@ -41,7 +41,7 @@ export function matrix(name: string, fn: (db: ContractDb, backend: Backend) => v
 export function matrixBoth(name: string, fn: (memory: ContractDb, postgres: ContractDb) => void | Promise<void>): void {
   test(name, async () => {
     const memory = new InMemoryAdapter();
-    const postgres = new PgliteAdapter();
+    const postgres = createOracleAdapter();
     try {
       await fn(memory, postgres);
     } finally {

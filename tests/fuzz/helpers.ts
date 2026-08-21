@@ -1,6 +1,6 @@
 import { InMemoryAdapter } from "../adapters/in-memory.ts";
-import { PgliteAdapter } from "../adapters/pglite.ts";
 import { deepCompareResults } from "../harness/normalize.ts";
+import { createOracleAdapter } from "../harness/oracle.ts";
 import type { ContractDb, QueryResult, SqlValue } from "../harness/types.ts";
 import { fuzzSeed } from "./config.ts";
 
@@ -140,7 +140,7 @@ export async function compareStateOrReport(
 
 export async function withDatabases(run: (memory: ContractDb, postgres: ContractDb) => Promise<void>): Promise<void> {
   const memory = new InMemoryAdapter();
-  const postgres = new PgliteAdapter();
+  const postgres = createOracleAdapter();
   try {
     await run(memory, postgres);
   } finally {

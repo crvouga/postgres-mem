@@ -75,7 +75,7 @@ An engine change that implements any registered item must remove it from the reg
 | Gap | Status |
 | --- | --- |
 | Mutation testing / branch-coverage thresholds | absent |
-| Second oracle (native postgres server) | absent — PGlite only |
+| Second oracle (native postgres server) | **wired** — `bun run test:postgres-native` / `PostgresServerAdapter` |
 | Full differential suite in real browsers | absent — smoke fixtures only |
 | Cross-runtime determinism matrix (Node/Deno/workers) | absent — Bun only |
 | ORM upstream suites | absent — style tests only |

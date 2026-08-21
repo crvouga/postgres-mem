@@ -7,6 +7,7 @@
 | Mechanism | Evidence |
 | --- | --- |
 | Differential SQL vs PGlite (Postgres 18.3) | `bun run test:postgres-compat` |
+| Differential SQL vs native PostgreSQL 18.3 | `bun run test:postgres-native` (embedded-postgres, or `POSTGRES_MEM_ORACLE_URL`) |
 | Contract areas (66 directories, 246 files) | `tests/contract/` — types, casts, numeric, arrays, jsonb, joins, lateral, distinct-on, grouping, window-functions, cte, recursive-cte, returning, on-conflict, sequences, schemas, search-path, catalogs, text-search, domains, triggers, date-time, intervals, errors, transactions, savepoints, determinism, snapshots, api, parameters, copy, prepare-execute, … |
 | Construct catalog (945 scenarios, 0 smoke stubs) | `bun run scenarios` → `compat/scenarios.ts` + `tests/contract/catalog/` |
 | Oracle builtin inventory closed | `bun run inventory` — 301 implemented functions + 41 operators; all 2486 + 33 remaining oracle items explicitly registered in `compat/unsupported-register.json` |
@@ -33,6 +34,5 @@
 - Locale/ICU collation ordering (pinned to `C` semantics)
 - ORM upstream test suites (Prisma/Drizzle/Kysely) — introspection queries work in style tests only
 - Full-precision `numeric` transcendentals at extreme scales (exp/ln/power edges are PARTIALLY VERIFIED)
-- Second oracle (native `postgres` server) — PGlite is the sole oracle today
 
 Honest product claim: **SQL dialect drop-in** for the native sync API — **not** a swap-in for `pg` / `postgres.js` / PGlite client APIs.

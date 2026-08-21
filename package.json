@@ -88,7 +88,8 @@
     "npm:seed": "bun run scripts/seed-npm.ts",
     "gh": "open https://github.com/crvouga/postgres-mem/actions",
     "example:react-vite": "cd examples/react-vite && bun install && bun run dev",
-    "fc": "clear && bun format && bun ci:local"
+    "fc": "clear && bun format && bun ci:local",
+    "test:postgres-native": "bun run scripts/run-postgres-native-tests.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
@@ -101,10 +102,13 @@
     "@semantic-release/npm": "^13.1.5",
     "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/bun": "latest",
+    "@types/pg": "^8.23.1",
     "conventional-changelog-conventionalcommits": "9.3.1",
+    "embedded-postgres": "18.3.0-beta.17",
     "esbuild": "^0.28.2",
     "fast-check": "^4.1.1",
     "husky": "^9.1.7",
+    "pg": "^8.23.0",
     "publint": "^0.3.23",
     "semantic-release": "^25.0.9",
     "typescript": "^5.8.3"
@@ -120,5 +124,15 @@
     "in-memory",
     "database",
     "sql"
+  ],
+  "trustedDependencies": [
+    "@embedded-postgres/darwin-arm64",
+    "@embedded-postgres/darwin-x64",
+    "@embedded-postgres/linux-arm",
+    "@embedded-postgres/linux-arm64",
+    "@embedded-postgres/linux-ia32",
+    "@embedded-postgres/linux-ppc64",
+    "@embedded-postgres/linux-x64",
+    "@embedded-postgres/windows-x64"
   ]
 }
