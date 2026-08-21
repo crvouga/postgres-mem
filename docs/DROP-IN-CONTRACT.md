@@ -14,7 +14,7 @@ This is **not** the claim “any app can replace `pg` / `postgres.js` / PGlite b
 
 Honest product claim:
 
-> **SQL dialect drop-in** vs PostgreSQL 18.3 (default oracle PGlite; secondary native-server oracle via `bun run test:postgres-native`) for the sync `Database`/`Statement` surface documented here — **not** a drop-in for the wire protocol, async client APIs, `pg_dump` files, PL/pgSQL, extensions, or multi-session concurrency.
+> **SQL dialect drop-in** vs PostgreSQL 18.3 (default oracle PGlite; secondary native-server oracle via `bun run test:postgres-native`) for the sync `Database`/`Statement` surface documented here — **not** a drop-in for the wire protocol, async client APIs, `pg_dump` files, full PL/pgSQL, extensions, or multi-session concurrency.
 
 ---
 
@@ -105,7 +105,7 @@ These are **not** drop-in failures; marketing must not imply them:
 1. **Wire protocol** / network clients / connection pooling
 2. **Multi-session concurrency**, MVCC across connections, isolation levels, locks that block
 3. **Roles / authentication / privileges** as enforcement (GRANT/REVOKE parse as no-ops)
-4. **PL/pgSQL** and other procedural languages (only `LANGUAGE sql`)
+4. **Full PL/pgSQL** and other procedural languages (plpgsql-lite UDFs: DECLARE / EXCEPTION WHEN others / RETURN NEXT / FOR-IN-SELECT)
 5. **Extensions** (`CREATE EXTENSION`), foreign data wrappers, logical/physical replication
 6. **Storage internals** — VACUUM behavior, TOAST, tablespaces, checkpoints
 7. **LISTEN/NOTIFY**, cursors (`DECLARE`/`FETCH`), `MERGE`, `CALL` (fail loud today)

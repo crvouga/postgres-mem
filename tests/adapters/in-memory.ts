@@ -1,4 +1,4 @@
-import { Database, PostgresError, type Statement } from "../../src/index.ts";
+import { Database, PostgresError, Snapshot, type Statement } from "../../src/index.ts";
 import { categoryFromSqlstate } from "../harness/classify.ts";
 import { normalizeErrorMessage } from "../harness/normalize.ts";
 import { failResult, okResult } from "../harness/session.ts";
@@ -73,10 +73,12 @@ class InMemoryStatement implements ContractStatement {
 }
 
 export class InMemoryAdapter implements ContractDb {
-  readonly db: Database;
+  db: Database;
+  private readonly options?: ConstructorParameters<typeof Database>[0];
   private closed = false;
 
   constructor(options?: ConstructorParameters<typeof Database>[0]) {
+    this.options = options;
     this.db = new Database(options);
   }
 
@@ -120,12 +122,13 @@ export class InMemoryAdapter implements ContractDb {
 
   snapshot(): Uint8Array {
     if (this.closed) throw new Error("Database is closed");
-    return this.db.snapshot();
+    return this.db.snapshot().encode();
   }
 
   restore(bytes: Uint8Array): void {
     if (this.closed) throw new Error("Database is closed");
-    this.db.restore(bytes);
+    this.db.close();
+    this.db = Snapshot.decode(bytes).open(this.options);
   }
 
   async close(): Promise<void> {

@@ -1116,7 +1116,6 @@
     "jsonb_path_query": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_query_array": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_query_array_tz": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
-    "jsonb_path_query_first": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_query_first_tz": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_query_tz": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_populate_record": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",

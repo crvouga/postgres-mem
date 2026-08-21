@@ -24,6 +24,6 @@
 import "./serialization/codec.ts";
 
 export type { BindValue, JsValue, QueryRow } from "./api/bind.ts";
-export { Database, type DatabaseOptions } from "./api/database.ts";
+export { Database, type DatabaseOptions, type RegisterFunctionOptions, Snapshot } from "./api/database.ts";
 export { type ResultSet, type RunResult, Statement } from "./api/statement.ts";
 export { type ErrorCategory, PostgresError } from "./errors/error.ts";

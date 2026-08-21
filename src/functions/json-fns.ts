@@ -14,6 +14,7 @@ import {
   parseJsonText,
   validateJsonText,
 } from "../types/jsonb.ts";
+import { jsonpathQueryFirst } from "../types/jsonpath.ts";
 import { type Numeric, numericFromBigInt, numericFromNumber } from "../types/numeric.ts";
 import {
   arrayElemType,
@@ -158,6 +159,22 @@ export function getJsonFunctions(): Map<string, ScalarFn> {
   });
   m.set("json_typeof", typeofFn);
   m.set("jsonb_typeof", typeofFn);
+
+  m.set("jsonb_path_query_first", (ctx, args) => {
+    if (args.length < 2) {
+      throw pgError(
+        "undefined_function",
+        `function jsonb_path_query_first(${args.map((a) => a.t).join(", ")}) does not exist`,
+        "42883",
+      );
+    }
+    if (args[0]!.v === null || args[1]!.v === null) return tv("jsonb", null);
+    const doc = jsonArg(ctx, args[0]!);
+    const path = args[1]!.t === "jsonpath" ? (args[1]!.v as string) : argText(ctx, args[1]!);
+    const found = jsonpathQueryFirst(doc, path);
+    if (found === null) return tv("jsonb", null);
+    return outJsonb(found);
+  });
 
   m.set(
     "json_array_length",

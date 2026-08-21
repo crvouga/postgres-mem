@@ -2,7 +2,7 @@
  * Compile-only checks that the published `dist` types are complete and strict.
  * Run after `bun run build` via `bun run typecheck:package`.
  */
-import { Database, PostgresError } from "../../dist/index.js";
+import { Database, PostgresError, Snapshot } from "../../dist/index.js";
 import type {
   BindValue,
   DatabaseOptions,
@@ -50,9 +50,21 @@ db.transaction(() => {
 const copied: number = db.copyFrom("COPY users (name) FROM STDIN", "Zed\n");
 const changes: number = db.changes;
 
-const snap: Uint8Array = db.snapshot();
-const restored = new Database();
-restored.restore(snap);
+const snap: Snapshot = db.snapshot();
+const snapBytes: Uint8Array = snap.encode();
+const fromSnap: Database = snap.open();
+const fromBytes: Database = Snapshot.decode(snapBytes).open();
+fromBytes.close();
+fromSnap.close();
+db.exec("CREATE TABLE extra (id int)");
+db.registerFunction({
+  name: "js_id",
+  args: ["int4"],
+  returns: "int4",
+  fn: (n) => n,
+});
+const int8Db = new Database({ int8: "string" });
+int8Db.close();
 
 const seed: number | bigint = db.seed;
 const defaultNow: Date = DEFAULT_NOW;

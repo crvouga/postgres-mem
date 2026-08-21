@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as fc from "fast-check";
-import { Database, PostgresError } from "../../src/index.ts";
+import { Database, PostgresError, Snapshot } from "../../src/index.ts";
 import { fuzzAssertConfig } from "./config.ts";
 
 const TOKEN_SALAD = fc
@@ -76,22 +76,23 @@ describe("robustness fuzz (memory-only)", () => {
     base.exec("CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8)");
     base.exec("INSERT INTO t (id, a, b, c) VALUES (1, 10, 'x', 1.5)");
     base.exec("INSERT INTO t (id, a, b, c) VALUES (2, NULL, NULL, NULL)");
-    const snap = base.snapshot();
+    const snap = base.snapshot().encode();
     base.close();
 
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 255 }), fc.nat({ max: 4095 }), (byte, offset) => {
         const corrupt = new Uint8Array(snap);
         corrupt[offset % corrupt.length] = byte;
-        const db2 = new Database();
         try {
-          db2.restore(corrupt);
-          // Restored cleanly — the database must still be queryable.
-          expectOnlyPostgresError(() => db2.query("SELECT * FROM t ORDER BY id"));
+          const opened = Snapshot.decode(corrupt).open();
+          try {
+            // Restored cleanly — the database must still be queryable.
+            expectOnlyPostgresError(() => opened.query("SELECT * FROM t ORDER BY id"));
+          } finally {
+            opened.close();
+          }
         } catch (error) {
           expect(error).toBeInstanceOf(PostgresError);
-        } finally {
-          db2.close();
         }
       }),
       fuzzAssertConfig(25),

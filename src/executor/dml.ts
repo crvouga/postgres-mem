@@ -35,7 +35,7 @@ import { fireRowTriggers } from "./triggers.ts";
 function requireTargetTable(env: ExecEnv, parts: string[], verb: string): TableData {
   const state = env.ctx.state;
   const table = state.findTable(parts);
-  if (table) return table;
+  if (table) return state.ensureWritableTable(table);
   const view = state.findView(parts);
   if (view) {
     throw pgError("wrong_object_type", `cannot ${verb} view "${view.name}"`, "42809");
@@ -607,38 +607,39 @@ export function handleReferencedDelete(env: ExecEnv, table: TableData, row: Datu
     const idxs = referencingRowIdxs(ref, key);
     if (idxs.length === 0) continue;
     const action = con.onDelete ?? "no_action";
+    const child = env.ctx.state.ensureWritableTable(ref.table);
     switch (action) {
       case "cascade": {
         for (let k = idxs.length - 1; k >= 0; k--) {
-          const childRow = ref.table.rows[idxs[k]!]!;
-          handleReferencedDelete(env, ref.table, childRow, depth + 1);
-          ref.table.rows.splice(idxs[k]!, 1);
+          const childRow = child.rows[idxs[k]!]!;
+          handleReferencedDelete(env, child, childRow, depth + 1);
+          child.rows.splice(idxs[k]!, 1);
         }
         break;
       }
       case "set_null": {
         for (const i of idxs) {
-          const newRow = ref.table.rows[i]!.slice();
+          const newRow = child.rows[i]!.slice();
           for (const c of con.columns) {
-            newRow[ref.table.columnIndex(c)] = null;
+            newRow[child.columnIndex(c)] = null;
           }
-          ref.table.rows[i] = newRow;
-          checkNotNull(env, ref.table, newRow);
-          checkChecks(env, ref.table, newRow);
+          child.rows[i] = newRow;
+          checkNotNull(env, child, newRow);
+          checkChecks(env, child, newRow);
         }
         break;
       }
       case "set_default": {
         for (const i of idxs) {
-          const newRow = ref.table.rows[i]!.slice();
+          const newRow = child.rows[i]!.slice();
           for (const c of con.columns) {
-            const ci = ref.table.columnIndex(c);
-            newRow[ci] = columnDefault(env, ref.table, ref.table.columns[ci]!);
+            const ci = child.columnIndex(c);
+            newRow[ci] = columnDefault(env, child, child.columns[ci]!);
           }
-          ref.table.rows[i] = newRow;
-          checkNotNull(env, ref.table, newRow);
-          checkChecks(env, ref.table, newRow);
-          checkForeignKeys(env, ref.table, newRow);
+          child.rows[i] = newRow;
+          checkNotNull(env, child, newRow);
+          checkChecks(env, child, newRow);
+          checkForeignKeys(env, child, newRow);
         }
         break;
       }
@@ -662,38 +663,39 @@ export function handleReferencedUpdate(env: ExecEnv, table: TableData, oldRows: 
       const idxs = referencingRowIdxs(ref, oldKey);
       if (idxs.length === 0) continue;
       const action = con.onUpdate ?? "no_action";
+      const child = env.ctx.state.ensureWritableTable(ref.table);
       switch (action) {
         case "cascade": {
           for (const i of idxs) {
-            const newRow = ref.table.rows[i]!.slice();
+            const newRow = child.rows[i]!.slice();
             for (let c = 0; c < con.columns.length; c++) {
-              const localIdx = ref.table.columnIndex(con.columns[c]!);
+              const localIdx = child.columnIndex(con.columns[c]!);
               const refIdx = table.columnIndex(con.refColumns[c]!);
               newRow[localIdx] = newRows[r]![refIdx] ?? null;
             }
-            ref.table.rows[i] = newRow;
-            checkChecks(env, ref.table, newRow);
+            child.rows[i] = newRow;
+            checkChecks(env, child, newRow);
           }
           break;
         }
         case "set_null": {
           for (const i of idxs) {
-            const newRow = ref.table.rows[i]!.slice();
-            for (const c of con.columns) newRow[ref.table.columnIndex(c)] = null;
-            ref.table.rows[i] = newRow;
-            checkNotNull(env, ref.table, newRow);
+            const newRow = child.rows[i]!.slice();
+            for (const c of con.columns) newRow[child.columnIndex(c)] = null;
+            child.rows[i] = newRow;
+            checkNotNull(env, child, newRow);
           }
           break;
         }
         case "set_default": {
           for (const i of idxs) {
-            const newRow = ref.table.rows[i]!.slice();
+            const newRow = child.rows[i]!.slice();
             for (const c of con.columns) {
-              const ci = ref.table.columnIndex(c);
-              newRow[ci] = columnDefault(env, ref.table, ref.table.columns[ci]!);
+              const ci = child.columnIndex(c);
+              newRow[ci] = columnDefault(env, child, child.columns[ci]!);
             }
-            ref.table.rows[i] = newRow;
-            checkForeignKeys(env, ref.table, newRow);
+            child.rows[i] = newRow;
+            checkForeignKeys(env, child, newRow);
           }
           break;
         }

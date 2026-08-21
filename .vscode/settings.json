@@ -11,6 +11,7 @@
     "PGTZ",
     "SAVEPOINT",
     "savepoints",
-    "sqlstate"
+    "sqlstate",
+    "tsearch"
   ]
 }

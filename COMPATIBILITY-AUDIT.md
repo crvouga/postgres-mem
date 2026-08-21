@@ -32,8 +32,8 @@ Coverage statuses (SQL_BEHAVIOR):
 
 Oracle builtin inventory:
   pg_catalog functions exposed by oracle: 2787
-  implemented in engine registries:        301
-  registered unsupported (with reasons):  2486
+  implemented in engine registries:        302
+  registered unsupported (with reasons):  2485
   silently missing:                          0 (gate fails otherwise)
   pg_catalog operators exposed by oracle:   74
   implemented:                              41
@@ -53,7 +53,7 @@ Types / casts / NULL:
   3VL through operators/aggregates/DISTINCT
 
 Functions (oracle surface):
-  VERIFIED for the implemented 301; every other oracle builtin is an
+  VERIFIED for the implemented 302; every other oracle builtin is an
   explicit register entry (never silent)
 
 JSON / JSONB:
@@ -74,10 +74,11 @@ Schemas / search_path / catalogs:
 Sequences / serial / identity / enums / domains / generated columns:
   VERIFIED
 
-Triggers / LANGUAGE sql functions:
+Triggers / LANGUAGE sql / plpgsql-lite functions:
   PARTIALLY VERIFIED — row-level triggers fire in creation order
   (PostgreSQL: name order), UPDATE OF ignored, INSTEAD OF unsupported —
-  all pinned divergences
+  all pinned divergences. plpgsql-lite UDFs: DECLARE, EXCEPTION WHEN
+  others, CASE, FOR-IN-SELECT, RETURN NEXT.
 
 Text search:
   PARTIALLY VERIFIED — tsvector/tsquery/@@/ts_rank with simple-style

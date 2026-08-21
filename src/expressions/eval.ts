@@ -772,13 +772,14 @@ function evalFuncCall(ctx: EngineCtx, scope: EvalScope, e: FuncCall): TypedValue
   if (bare !== null) {
     const stateful = scope.callStatefulFunction?.(bare, args);
     if (stateful !== undefined) return stateful;
-    if (hasScalarFunction(bare)) {
-      return callScalarFunction(ctx, bare, args);
-    }
   }
 
   const user = scope.callUserFunction?.(e.name, args, e);
   if (user !== undefined) return user;
+
+  if (bare !== null && hasScalarFunction(bare)) {
+    return callScalarFunction(ctx, bare, args);
+  }
 
   throw pgError(
     "undefined_function",

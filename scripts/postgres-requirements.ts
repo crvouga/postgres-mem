@@ -220,7 +220,8 @@ const SEED: Record<string, { status: CoverageStatus; evidence: string[]; notes: 
   "sql-createfunction": {
     status: "PARTIALLY_VERIFIED",
     evidence: ["tests/contract/functions/"],
-    notes: "LANGUAGE sql bodies only; PL/pgSQL fails loud",
+    notes:
+      "LANGUAGE sql plus plpgsql-lite (DECLARE, EXCEPTION WHEN others, CASE, FOR-IN-SELECT, RETURN NEXT); no cursors/NOTICE/packages",
   },
   "sql-alterfunction": {
     status: "PARTIALLY_VERIFIED",

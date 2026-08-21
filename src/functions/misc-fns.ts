@@ -46,6 +46,7 @@ function parseQualifiedName(name: string): string[] {
 }
 
 export function sequenceNextval(ctx: EngineCtx, seq: SequenceData): bigint {
+  seq = ctx.state.ensureWritableSequence(seq);
   let next: bigint;
   if (!seq.isCalled) {
     next = seq.lastValue;
@@ -177,7 +178,7 @@ export function getMiscFunctions(): Map<string, ScalarFn> {
   m.set(
     "setval",
     strict("int8", (ctx, args) => {
-      const seq = findSequenceForCall(ctx, argText(ctx, args[0]!));
+      const seq = ctx.state.ensureWritableSequence(findSequenceForCall(ctx, argText(ctx, args[0]!)));
       const value = argBigInt(ctx, args[1]!);
       const isCalled = args.length > 2 ? args[2]!.v === true : true;
       if (value < seq.minValue || value > seq.maxValue) {

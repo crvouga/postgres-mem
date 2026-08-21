@@ -14,6 +14,7 @@ import {
   parseTimestampTz,
 } from "./datetime.ts";
 import { type JsonbValue, jsonbText, parseJsonText, validateJsonText } from "./jsonb.ts";
+import { parseJsonpath } from "./jsonpath.ts";
 import { type Numeric, numericText, parseNumeric } from "./numeric.ts";
 
 /**
@@ -147,6 +148,7 @@ const TYPE_ALIASES: Record<string, TypeId> = {
   uuid: "uuid",
   json: "json",
   jsonb: "jsonb",
+  jsonpath: "jsonpath",
   regclass: "regclass",
   regtype: "regtype",
   regproc: "regproc",
@@ -258,6 +260,7 @@ export const TYPE_OIDS: Record<string, number> = {
   record: 2249,
   uuid: 2950,
   jsonb: 3802,
+  jsonpath: 4072,
   tsvector: 3614,
   tsquery: 3615,
   void: 2278,
@@ -649,6 +652,7 @@ export function datumText(t: TypeId, v: Datum, ctx: OutputCtx): string {
     case "regclass":
     case "regtype":
     case "regproc":
+    case "jsonpath":
     case "tsvector":
     case "tsquery":
     case "bit":
@@ -742,6 +746,9 @@ export function datumFromText(t: TypeId, text: string, ctx: InputCtx): Datum {
       return text;
     case "jsonb":
       return wrapJsonb(parseJsonText(text));
+    case "jsonpath":
+      parseJsonpath(text);
+      return text;
     case "bytea":
       return parseByteaText(text);
     case "date":

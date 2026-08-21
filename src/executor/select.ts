@@ -16,13 +16,15 @@ import type {
   WithClause,
 } from "../ast/nodes.ts";
 import { pgError } from "../errors/error.ts";
+import { bindValueToTyped, datumToJs } from "../api/bind.ts";
 import type { EvalScope } from "../expressions/eval.ts";
 import { evalExpr } from "../expressions/eval.ts";
 import { createAggregate, isAggregateName, isOrderedSetAggregate, unifyAggType } from "../functions/aggregates.ts";
 import { getSrfFunctions, isSrfName } from "../functions/srf.ts";
 import { catalogRelation } from "../schema/catalog.ts";
 import type { FunctionData } from "../storage/database-state.ts";
-import { castTo, unifyTypes } from "../types/cast.ts";
+import { canImplicitCast, castTo, unifyTypes } from "../types/cast.ts";
+import { callPlpgsqlScalar, callPlpgsqlSet } from "./plpgsql.ts";
 import { datumCompare, datumKey } from "../types/compare.ts";
 import { type Datum, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
 import {
@@ -144,7 +146,7 @@ export function makeEvalScope(env: ExecEnv, scope: RowScope | null, extras?: Sco
     },
     callUserFunction(name, args, node) {
       void node;
-      const fn = resolveUserFunction(env, name, args.length);
+      const fn = resolveUserFunctionForArgs(env, name, args);
       if (!fn) return undefined;
       return callSqlFunctionScalar(env, fn, args);
     },
@@ -173,6 +175,24 @@ export function resolveUserFunction(env: ExecEnv, name: string[], argCount: numb
   for (const fn of candidates) {
     const required = fn.argDefaults.filter((d) => d === null).length;
     if (argCount >= required && argCount <= fn.argTypes.length) return fn;
+  }
+  return null;
+}
+
+/** Prefer a UDF whose declared types accept the actual args via implicit cast. */
+export function resolveUserFunctionForArgs(env: ExecEnv, name: string[], args: TypedValue[]): FunctionData | null {
+  const candidates = env.ctx.state.findFunctions(name);
+  for (const fn of candidates) {
+    const required = fn.argDefaults.filter((d) => d === null).length;
+    if (args.length < required || args.length > fn.argTypes.length) continue;
+    let ok = true;
+    for (let i = 0; i < args.length; i++) {
+      if (!canImplicitCast(args[i]!.t, fn.argTypes[i]!)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return fn;
   }
   return null;
 }
@@ -215,6 +235,19 @@ function runFunctionBody(env: ExecEnv, fn: FunctionData, args: TypedValue[]): Ex
 
 export function callSqlFunctionScalar(env: ExecEnv, fn: FunctionData, args: TypedValue[]): TypedValue {
   const retT = fn.returns ?? "text";
+  if (fn.language === "plpgsql") {
+    return callPlpgsqlScalar(env, fn, args);
+  }
+  if (fn.language === "js") {
+    if (!fn.jsImpl) {
+      throw pgError("undefined_function", `JavaScript function ${fn.name} is not registered`, "42883");
+    }
+    if (fn.strict && args.some((a) => a.v === null)) return tv(retT, null);
+    const jsArgs = args.map((a) => datumToJs(a.t, a.v, env.ctx));
+    const out = fn.jsImpl(...jsArgs);
+    if (out === null || out === undefined) return tv(retT, null);
+    return castTo(env.ctx, bindValueToTyped(out, 0), retT, {});
+  }
   const last = runFunctionBody(env, fn, args);
   if (last === null) return tv(retT, null);
   if (fn.returnsSet || fn.returnsTable) {
@@ -227,6 +260,9 @@ export function callSqlFunctionScalar(env: ExecEnv, fn: FunctionData, args: Type
 }
 
 export function callSqlFunctionSet(env: ExecEnv, fn: FunctionData, args: TypedValue[]): Relation {
+  if (fn.language === "plpgsql") {
+    return callPlpgsqlSet(env, fn, args);
+  }
   const last = runFunctionBody(env, fn, args);
   if (last === null) return { columns: [], rows: [] };
   if (fn.returnsTable) {
@@ -491,6 +527,14 @@ function srfCallRelation(env: ExecEnv, call: Expr, scope: RowScope | null, alias
         : call.name[call.name.length - 1]!;
   const evalScope = makeEvalScope(env, scope);
   const args = call.args.map((a) => evalExpr(env.ctx, evalScope, a));
+  const userFn = resolveUserFunctionForArgs(env, call.name, args);
+  if (userFn) {
+    if (userFn.returnsSet || userFn.returnsTable) {
+      return callSqlFunctionSet(env, userFn, args);
+    }
+    const v = callSqlFunctionScalar(env, userFn, args);
+    return { columns: [{ name: userFn.name, type: v.t === UNKNOWN ? "text" : v.t, table: null }], rows: [[v.v]] };
+  }
   const srf = getSrfFunctions().get(bare);
   if (srf) {
     const res = srf(env.ctx, args, alias ?? bare);
@@ -498,14 +542,6 @@ function srfCallRelation(env: ExecEnv, call: Expr, scope: RowScope | null, alias
       columns: res.columns.map((c) => ({ name: c.name, type: c.type, table: null })),
       rows: res.rows,
     };
-  }
-  const userFn = resolveUserFunction(env, call.name, args.length);
-  if (userFn) {
-    if (userFn.returnsSet || userFn.returnsTable) {
-      return callSqlFunctionSet(env, userFn, args);
-    }
-    const v = callSqlFunctionScalar(env, userFn, args);
-    return { columns: [{ name: userFn.name, type: v.t === UNKNOWN ? "text" : v.t, table: null }], rows: [[v.v]] };
   }
   // scalar builtin in FROM: one row, one column
   const v = evalExpr(env.ctx, evalScope, call);

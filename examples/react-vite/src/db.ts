@@ -1,4 +1,4 @@
-import { Database } from "@crvouga/postgres-mem";
+import { Database, Snapshot } from "@crvouga/postgres-mem";
 
 export const STORAGE_KEY = "postgres-mem-example-snapshot";
 
@@ -114,16 +114,15 @@ export function seed(db: Database): void {
 }
 
 function createDatabase(): Database {
-  const db = createEngine();
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
-      db.restore(base64ToBytes(saved));
-      return db;
+      return Snapshot.decode(base64ToBytes(saved)).open({ now: "system" });
     } catch {
       // Corrupt or incompatible snapshot — fall through to seed.
     }
   }
+  const db = createEngine();
   seed(db);
   return db;
 }
@@ -160,7 +159,7 @@ export function savedSnapshotBytes(): number | null {
 }
 
 export function saveSnapshot(): number {
-  const snap = db.snapshot();
+  const snap = db.snapshot().encode();
   localStorage.setItem(STORAGE_KEY, bytesToBase64(snap));
   return snap.byteLength;
 }
@@ -168,7 +167,8 @@ export function saveSnapshot(): number {
 export function restoreSnapshot(): boolean {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (!saved) return false;
-  db.restore(base64ToBytes(saved));
+  db.close();
+  db = Snapshot.decode(base64ToBytes(saved)).open({ now: "system" });
   return true;
 }
 

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { Database, PostgresError } from "../../../src/index.ts";
+import { Database, PostgresError, Snapshot } from "../../../src/index.ts";
+import { encodeDatabaseState } from "../../../src/serialization/codec.ts";
 import { InMemoryAdapter } from "../../adapters/in-memory.ts";
 import { expectParity } from "../../harness/assert.ts";
 import { matrixBoth } from "../../harness/matrix.ts";
@@ -58,17 +59,17 @@ test("snapshot roundtrip discards later mutations", () => {
   const db = new Database();
   db.exec("CREATE TABLE t (id int)");
   db.exec("INSERT INTO t VALUES (1), (2)");
-  const bytes = db.snapshot();
+  const snap = db.snapshot();
   db.exec("INSERT INTO t VALUES (3)");
-  db.restore(bytes);
-  expect(db.query("SELECT id FROM t ORDER BY id")).toEqual([{ id: 1 }, { id: 2 }]);
+  const opened = snap.open();
+  expect(opened.query("SELECT id FROM t ORDER BY id")).toEqual([{ id: 1 }, { id: 2 }]);
+  expect(db.query("SELECT id FROM t ORDER BY id")).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
 });
 
 test("snapshot preserves schema constraints and defaults", () => {
   const source = new Database();
-  const restored = new Database();
   source.exec("CREATE TABLE t (id serial PRIMARY KEY, label text NOT NULL DEFAULT 'x')");
-  restored.restore(source.snapshot());
+  const restored = source.snapshot().open();
   restored.exec("INSERT INTO t DEFAULT VALUES");
   expect(restored.query("SELECT * FROM t")).toEqual([{ id: 1, label: "x" }]);
   expect(() => restored.exec("INSERT INTO t (label) VALUES (NULL)")).toThrow(/null value/);
@@ -76,12 +77,11 @@ test("snapshot preserves schema constraints and defaults", () => {
 
 test("snapshot clone stays in lockstep under identical ops", () => {
   const source = new Database();
-  const clone = new Database();
   source.exec("CREATE TABLE t (id serial PRIMARY KEY, name text UNIQUE, n int DEFAULT 0)");
   source.exec("CREATE INDEX t_n ON t (n)");
   source.exec("CREATE VIEW v AS SELECT id, name FROM t WHERE n > 0");
   source.exec("INSERT INTO t (name, n) VALUES ('a', 1), ('b', 0)");
-  clone.restore(source.snapshot());
+  const clone = source.snapshot().open();
 
   const ops = [
     "INSERT INTO t (name, n) VALUES ('c', 2)",
@@ -109,48 +109,45 @@ test("snapshot preserves sequences, enums, domains, and functions", () => {
     INSERT INTO t (m, p) VALUES ('happy', 5);
     CREATE FUNCTION double_it(x int) RETURNS int LANGUAGE sql AS 'SELECT x * 2';
   `);
-  const clone = new Database();
-  clone.restore(source.snapshot());
+  const clone = source.snapshot().open();
   expect(clone.query("SELECT nextval('sq') AS n")[0]).toEqual({ n: 101n });
   expect(clone.query("SELECT double_it(21) AS d")[0]).toEqual({ d: 42 });
   expect(clone.query("SELECT m::text AS m FROM t")[0]).toEqual({ m: "happy" });
   expect(() => clone.exec("INSERT INTO t (m, p) VALUES ('sad', -1)")).toThrow(/check/i);
 });
 
-test("restore during a transaction is rejected", () => {
+test("snapshot during a transaction is rejected", () => {
   const db = new Database();
-  const snap = db.snapshot();
   db.exec("BEGIN");
-  expect(() => db.restore(snap)).toThrow(/transaction/);
+  expect(() => db.snapshot()).toThrow(/transaction/);
   db.exec("ROLLBACK");
-  db.restore(snap);
 });
 
-test("restore rejects newer snapshot format version", () => {
+test("decode rejects newer snapshot format version", () => {
   const db = new Database();
   db.exec("CREATE TABLE t (id int)");
-  const snap = db.snapshot();
+  const snap = db.snapshot().encode();
   // PGMM + little-endian u32 version at offset 4
   const bumped = new Uint8Array(snap);
   const view = new DataView(bumped.buffer, bumped.byteOffset, bumped.byteLength);
   view.setUint32(4, view.getUint32(4, true) + 1, true);
   try {
-    db.restore(bumped);
-    expect.unreachable("expected restore to throw");
+    Snapshot.decode(bumped);
+    expect.unreachable("expected decode to throw");
   } catch (err) {
     expect(err).toBeInstanceOf(PostgresError);
     expect((err as PostgresError).category).toBe("snapshot_version");
   }
 });
 
-test("restore rejects corrupt magic with a distinct error", () => {
+test("decode rejects corrupt magic with a distinct error", () => {
   const db = new Database();
   db.exec("CREATE TABLE t (id int)");
-  const corrupt = new Uint8Array(db.snapshot());
+  const corrupt = new Uint8Array(db.snapshot().encode());
   corrupt[0] = "X".charCodeAt(0);
   try {
-    db.restore(corrupt);
-    expect.unreachable("expected restore to throw");
+    Snapshot.decode(corrupt);
+    expect.unreachable("expected decode to throw");
   } catch (err) {
     expect(err).toBeInstanceOf(PostgresError);
     expect((err as PostgresError).message).toMatch(/magic/);
@@ -158,13 +155,13 @@ test("restore rejects corrupt magic with a distinct error", () => {
   }
 });
 
-test("restore rejects truncated payloads", () => {
+test("decode rejects truncated payloads", () => {
   const db = new Database();
   db.exec("CREATE TABLE t (id int, v text)");
   db.exec("INSERT INTO t VALUES (1, 'x')");
-  const snap = db.snapshot();
+  const snap = db.snapshot().encode();
   const truncated = snap.slice(0, snap.length - 10);
-  expect(() => db.restore(truncated)).toThrow(PostgresError);
+  expect(() => Snapshot.decode(truncated)).toThrow(PostgresError);
 });
 
 test("current snapshot version round-trips with PGMM magic", () => {
@@ -172,12 +169,25 @@ test("current snapshot version round-trips with PGMM magic", () => {
   a.exec("CREATE TABLE t (id serial PRIMARY KEY, name text)");
   a.prepare("INSERT INTO t (name) VALUES ($1)").run("Ada");
   const snap = a.snapshot();
-  expect(String.fromCharCode(snap[0]!, snap[1]!, snap[2]!, snap[3]!)).toBe("PGMM");
-  const version = new DataView(snap.buffer, snap.byteOffset, snap.byteLength).getUint32(4, true);
-  expect(version).toBe(1);
-  const b = new Database();
-  b.restore(snap);
+  const bytes = snap.encode();
+  expect(String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!)).toBe("PGMM");
+  const version = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true);
+  expect(version).toBe(2);
+  const b = snap.open();
   expect(b.query("SELECT name FROM t")).toEqual([{ name: "Ada" }]);
+});
+
+test("PGMM v1 blobs still hydrate", () => {
+  const source = new Database({ seed: 3 });
+  source.exec("CREATE TABLE t (id serial PRIMARY KEY, name text UNIQUE)");
+  source.exec("INSERT INTO t (name) VALUES ('a'), ('b')");
+  const v1 = encodeDatabaseState(source.state, { prngState: source.prng.getState(), nowMs: source.now().getTime() }, 1);
+  expect(new DataView(v1.buffer, v1.byteOffset).getUint32(4, true)).toBe(1);
+  const opened = Snapshot.decode(v1).open();
+  expect(opened.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }, { name: "b" }]);
+  expect(() => opened.exec("INSERT INTO t (name) VALUES ('a')")).toThrow(/unique/i);
+  source.close();
+  opened.close();
 });
 
 test("all datum kinds round-trip through a snapshot", () => {
@@ -196,8 +206,7 @@ test("all datum kinds round-trip through a snapshot", () => {
     );
     INSERT INTO kinds DEFAULT VALUES;
   `);
-  const clone = new Database();
-  clone.restore(db.snapshot());
+  const clone = db.snapshot().open();
   const cols =
     "b, i2, i4, i8, f4, f8, n::text AS n, t, by, d::text AS d, ts::text AS ts, tz::text AS tz, " +
     "iv::text AS iv, u::text AS u, j::text AS j, jb::text AS jb, arr::text AS arr, txts::text AS txts";
@@ -205,5 +214,41 @@ test("all datum kinds round-trip through a snapshot", () => {
     db.query(`SELECT ${cols} FROM kinds ORDER BY i4 NULLS LAST`),
   );
   // snapshots of source and clone are byte-identical
-  expect([...clone.snapshot()]).toEqual([...db.snapshot()]);
+  expect([...clone.snapshot().encode()]).toEqual([...db.snapshot().encode()]);
+});
+
+test("open isolates writes and preserves encode bytes", () => {
+  const parent = new Database();
+  parent.exec("CREATE TABLE t (id serial PRIMARY KEY, name text)");
+  parent.exec("INSERT INTO t (name) VALUES ('a')");
+  const child = parent.snapshot().open();
+  expect([...child.snapshot().encode()]).toEqual([...parent.snapshot().encode()]);
+  child.exec("INSERT INTO t (name) VALUES ('b')");
+  expect(parent.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }]);
+  expect(child.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }, { name: "b" }]);
+  parent.close();
+  child.close();
+});
+
+test("decode hydrates independently and does not mutate input bytes", () => {
+  const source = new Database();
+  source.exec("CREATE TABLE t (id serial PRIMARY KEY, name text)");
+  source.exec("INSERT INTO t (name) VALUES ('a')");
+  const snap = source.snapshot();
+  const original = Uint8Array.from(snap.encode());
+  const opened = snap.open();
+  expect([...snap.encode()]).toEqual([...original]);
+  expect(opened.query("SELECT name FROM t")).toEqual([{ name: "a" }]);
+  opened.exec("INSERT INTO t (name) VALUES ('b')");
+  expect(source.query("SELECT name FROM t")).toEqual([{ name: "a" }]);
+  source.close();
+  opened.close();
+});
+
+test("snapshot rejects an open transaction", () => {
+  const db = new Database();
+  db.exec("BEGIN");
+  expect(() => db.snapshot()).toThrow(PostgresError);
+  db.exec("ROLLBACK");
+  db.close();
 });

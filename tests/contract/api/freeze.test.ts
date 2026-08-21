@@ -5,8 +5,8 @@ import * as postgresMem from "../../../src/index.ts";
 import { Database, PostgresError } from "../../../src/index.ts";
 
 describe("public API exports", () => {
-  test("main entry runtime keys are exactly Database, PostgresError, Statement", () => {
-    expect(Object.keys(postgresMem).sort()).toEqual(["Database", "PostgresError", "Statement"]);
+  test("main entry runtime keys are exactly Database, PostgresError, Snapshot, Statement", () => {
+    expect(Object.keys(postgresMem).sort()).toEqual(["Database", "PostgresError", "Snapshot", "Statement"]);
   });
 
   test("package.json exports only . and ./unstable", () => {

@@ -73,8 +73,7 @@ runCatalog(DET_SECTION, [
     fn: () => {
       const a = new Database({ seed: 5 });
       firstRandom(a);
-      const clone = new Database();
-      clone.restore(a.snapshot());
+      const clone = a.snapshot().open();
       expect(firstRandom(clone)).toBe(firstRandom(a));
       a.close();
       clone.close();
@@ -98,8 +97,7 @@ runCatalog(DET_SECTION, [
       db.exec("INSERT INTO t VALUES (3), (1), (2)");
       const scan = db.query("SELECT n FROM t");
       const agg = db.query("SELECT string_agg(n::text, ',') AS s FROM t");
-      const clone = new Database();
-      clone.restore(db.snapshot());
+      const clone = db.snapshot().open();
       expect(clone.query("SELECT n FROM t")).toEqual(scan);
       expect(clone.query("SELECT string_agg(n::text, ',') AS s FROM t")).toEqual(agg);
       clone.close();

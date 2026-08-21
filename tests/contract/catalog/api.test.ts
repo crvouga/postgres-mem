@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { API_SECTION } from "../../../compat/sections/api.ts";
-import { PostgresError, type Statement } from "../../../src/index.ts";
+import { Database, PostgresError, Snapshot, type Statement } from "../../../src/index.ts";
 import { runCatalog } from "./run.ts";
 
 runCatalog(API_SECTION, [
@@ -207,7 +207,7 @@ runCatalog(API_SECTION, [
       db.exec("CREATE TABLE t (n int)");
       expect(db.query("SELECT 1 AS v")).not.toBeInstanceOf(Promise);
       expect(db.prepare("INSERT INTO t VALUES (1)").run()).not.toBeInstanceOf(Promise);
-      expect(db.snapshot()).toBeInstanceOf(Uint8Array);
+      expect(db.snapshot()).toBeInstanceOf(Snapshot);
     },
   },
   {
@@ -220,6 +220,72 @@ runCatalog(API_SECTION, [
         { a: 1, b: "x" },
         { a: 2, b: null },
       ]);
+    },
+  },
+  {
+    id: "API-int8-01",
+    kind: "divergence",
+    fn: () => {
+      const db = new Database({ int8: "number" });
+      expect(db.query("SELECT 1::int8 AS n")[0]).toEqual({ n: 1 });
+      db.close();
+    },
+  },
+  {
+    id: "API-int8-02",
+    kind: "divergence",
+    fn: () => {
+      const db = new Database({ int8: "string" });
+      expect(db.query("SELECT 9007199254740993::int8 AS n")[0]).toEqual({ n: "9007199254740993" });
+      db.close();
+    },
+  },
+  {
+    id: "API-fn-01",
+    kind: "divergence",
+    fn: (db) => {
+      db.registerFunction({
+        name: "js_add",
+        args: ["int4", "int4"],
+        returns: "int4",
+        fn: (a, b) => Number(a) + Number(b),
+      });
+      expect(db.query("SELECT js_add(2, 3) AS n")[0]).toEqual({ n: 5 });
+      const child = db.snapshot().open();
+      expect(child.query("SELECT js_add(4, 5) AS n")[0]).toEqual({ n: 9 });
+      const opened = Snapshot.decode(db.snapshot().encode()).open();
+      expect(() => opened.query("SELECT js_add(1, 1)")).toThrow();
+      child.close();
+      opened.close();
+    },
+  },
+  {
+    id: "API-dump-01",
+    kind: "divergence",
+    fn: (db) => {
+      db.exec(`
+        CREATE TABLE t (id int);
+        DO $$ BEGIN RAISE NOTICE 'skip'; END $$;
+        ALTER TABLE t SET (fillfactor = 70);
+      `);
+      expect(db.query("SELECT count(*)::int AS c FROM t")[0]).toEqual({ c: 0 });
+    },
+  },
+  {
+    id: "API-do-01",
+    kind: "divergence",
+    fn: (db) => {
+      db.exec("DO $$ BEGIN PERFORM 1; END $$");
+      db.exec("DO LANGUAGE plpgsql $$ BEGIN NULL; END $$");
+    },
+  },
+  {
+    id: "API-set-01",
+    kind: "divergence",
+    fn: (db) => {
+      db.exec("CREATE TABLE t (id int)");
+      db.exec("ALTER TABLE t SET (fillfactor = 70, autovacuum_enabled = false)");
+      expect(db.query("SELECT count(*)::int AS c FROM t")[0]).toEqual({ c: 0 });
     },
   },
 ]);

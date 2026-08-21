@@ -69,6 +69,8 @@ export class TableData {
   temp: boolean;
   /** monotonically increasing oid-like id for catalog output */
   readonly oid: number;
+  /** >0 while shared with a clone or transaction snapshot. */
+  shareCount = 0;
 
   constructor(schema: string, name: string, columns: ColumnMeta[], oid: number, temp = false) {
     this.schema = schema;
@@ -79,6 +81,18 @@ export class TableData {
     this.triggers = [];
     this.temp = temp;
     this.oid = oid;
+  }
+
+  get frozen(): boolean {
+    return this.shareCount > 0;
+  }
+
+  freeze(): void {
+    this.shareCount++;
+  }
+
+  thaw(): void {
+    if (this.shareCount > 0) this.shareCount--;
   }
 
   columnIndex(name: string): number {
@@ -98,6 +112,11 @@ export class TableData {
     t.triggers = this.triggers.map((tr) => ({ ...tr }));
     return t;
   }
+
+  /** Independent writable copy (row tuples copied so ALTER COLUMN is isolated). */
+  cloneForWrite(): TableData {
+    return this.clone();
+  }
 }
 
 export interface ViewData {
@@ -111,6 +130,7 @@ export interface ViewData {
   matColumns: Array<{ name: string; type: TypeId }> | null;
   temp: boolean;
   oid: number;
+  shareCount?: number;
 }
 
 export interface SequenceData {
@@ -128,6 +148,7 @@ export interface SequenceData {
   dataType: TypeId;
   temp: boolean;
   oid: number;
+  shareCount?: number;
 }
 
 export interface EnumData {
@@ -135,6 +156,7 @@ export interface EnumData {
   schema: string;
   labels: string[];
   oid: number;
+  shareCount?: number;
 }
 
 export interface DomainData {
@@ -145,6 +167,7 @@ export interface DomainData {
   defaultExpr: Expr | null;
   checks: Array<{ name: string; expr: Expr }>;
   oid: number;
+  shareCount?: number;
 }
 
 export interface FunctionData {
@@ -161,6 +184,9 @@ export interface FunctionData {
   rawBody: string | null;
   strict: boolean;
   oid: number;
+  jsImpl?: (
+    ...args: Array<null | boolean | number | bigint | string | Uint8Array>
+  ) => null | boolean | number | bigint | string | Uint8Array;
 }
 
 export class SchemaData {
@@ -203,6 +229,19 @@ export class SchemaData {
         v.map((f) => ({ ...f })),
       );
     for (const [k, v] of this.indexes) s.indexes.set(k, { ...v, columns: v.columns.map((c) => ({ ...c })) });
+    return s;
+  }
+
+  /** Share table/sequence objects; copy maps so CREATE/DROP is isolated. */
+  cloneShallow(): SchemaData {
+    const s = new SchemaData(this.name, this.oid);
+    s.tables = new Map(this.tables);
+    s.views = new Map(this.views);
+    s.sequences = new Map(this.sequences);
+    s.enums = new Map(this.enums);
+    s.domains = new Map(this.domains);
+    for (const [k, v] of this.functions) s.functions.set(k, v.slice());
+    s.indexes = new Map(this.indexes);
     return s;
   }
 }
@@ -427,7 +466,7 @@ export class DatabaseState {
     return null;
   }
 
-  /** deep clone for transaction snapshots (datums are immutable; rows copied) */
+  /** deep clone (datums are immutable; rows copied) */
   clone(): DatabaseState {
     const s = new DatabaseState(this.prng, this.clock);
     s.schemas = new Map();
@@ -438,8 +477,88 @@ export class DatabaseState {
     s.changes = this.changes;
     s.inTransaction = this.inTransaction;
     s.lastSequence = this.lastSequence ? { ...this.lastSequence } : null;
-    (s as any).oidCounter = this.oidCounter;
+    s.oidCounter = this.oidCounter;
     return s;
+  }
+
+  /** Share frozen catalog objects; copy maps so CREATE/DROP is isolated. */
+  cloneShallow(): DatabaseState {
+    const s = new DatabaseState(this.prng, this.clock);
+    s.schemas = new Map();
+    for (const [k, v] of this.schemas) s.schemas.set(k, v.cloneShallow());
+    s.settings = new Map(this.settings);
+    s.localSettings = new Map(this.localSettings);
+    s.prepared = new Map(this.prepared);
+    s.changes = this.changes;
+    s.inTransaction = this.inTransaction;
+    s.lastSequence = this.lastSequence ? { ...this.lastSequence } : null;
+    s.oidCounter = this.oidCounter;
+    return s;
+  }
+
+  freezeShared(): void {
+    for (const schema of this.schemas.values()) {
+      for (const table of schema.tables.values()) table.freeze();
+      for (const seq of schema.sequences.values()) seq.shareCount = (seq.shareCount ?? 0) + 1;
+      for (const view of schema.views.values()) view.shareCount = (view.shareCount ?? 0) + 1;
+      for (const en of schema.enums.values()) en.shareCount = (en.shareCount ?? 0) + 1;
+      for (const domain of schema.domains.values()) domain.shareCount = (domain.shareCount ?? 0) + 1;
+    }
+  }
+
+  thawShared(): void {
+    for (const schema of this.schemas.values()) {
+      for (const table of schema.tables.values()) table.thaw();
+      for (const seq of schema.sequences.values()) {
+        if ((seq.shareCount ?? 0) > 0) seq.shareCount = (seq.shareCount ?? 1) - 1;
+      }
+      for (const view of schema.views.values()) {
+        if ((view.shareCount ?? 0) > 0) view.shareCount = (view.shareCount ?? 1) - 1;
+      }
+      for (const en of schema.enums.values()) {
+        if ((en.shareCount ?? 0) > 0) en.shareCount = (en.shareCount ?? 1) - 1;
+      }
+      for (const domain of schema.domains.values()) {
+        if ((domain.shareCount ?? 0) > 0) domain.shareCount = (domain.shareCount ?? 1) - 1;
+      }
+    }
+  }
+
+  ensureWritableTable(table: TableData): TableData {
+    if (!table.frozen) return table;
+    const schema = this.schemas.get(table.schema);
+    const copy = table.cloneForWrite();
+    schema?.tables.set(table.name, copy);
+    return copy;
+  }
+
+  ensureWritableSequence(seq: SequenceData): SequenceData {
+    if ((seq.shareCount ?? 0) === 0) return seq;
+    const schema = this.schemas.get(seq.schema);
+    const copy: SequenceData = { ...seq, shareCount: 0 };
+    schema?.sequences.set(seq.name, copy);
+    return copy;
+  }
+
+  ensureWritableView(view: ViewData): ViewData {
+    if ((view.shareCount ?? 0) === 0) return view;
+    const schema = this.schemas.get(view.schema);
+    const copy: ViewData = {
+      ...view,
+      shareCount: 0,
+      matRows: view.matRows ? view.matRows.map((r) => r.slice()) : null,
+      matColumns: view.matColumns ? view.matColumns.map((c) => ({ ...c })) : null,
+    };
+    schema?.views.set(view.name, copy);
+    return copy;
+  }
+
+  ensureWritableEnum(en: EnumData): EnumData {
+    if ((en.shareCount ?? 0) === 0) return en;
+    const schema = this.schemas.get(en.schema);
+    const copy: EnumData = { ...en, labels: en.labels.slice(), shareCount: 0 };
+    schema?.enums.set(en.name, copy);
+    return copy;
   }
 
   /** copy the contents of `other` into this state (rollback restore) */
@@ -450,6 +569,16 @@ export class DatabaseState {
     this.prepared = other.prepared;
     this.changes = other.changes;
     this.lastSequence = other.lastSequence;
-    (this as any).oidCounter = (other as any).oidCounter;
+    this.oidCounter = other.oidCounter;
+  }
+
+  /** @internal Snapshot codec access to the oid allocator. */
+  snapshotOidCounter(): number {
+    return this.oidCounter;
+  }
+
+  /** @internal Snapshot codec restore of the oid allocator. */
+  restoreOidCounter(value: number): void {
+    this.oidCounter = value;
   }
 }

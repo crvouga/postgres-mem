@@ -41,7 +41,7 @@ Requires Node.js ≥ 20 or Bun ≥ 1.1. The published package is **ESM only** (`
 ## Usage
 
 ```ts
-import { Database } from "@crvouga/postgres-mem";
+import { Database, Snapshot } from "@crvouga/postgres-mem";
 
 const db = new Database();
 
@@ -57,9 +57,10 @@ db.prepare(`INSERT INTO users (name) VALUES ($1)`).run("Alice");
 const users = db.query<{ id: number; name: string }>(`SELECT * FROM users`);
 console.log(users);
 
-const snap = db.snapshot();
-const db2 = new Database();
-db2.restore(snap);
+const seed = db.snapshot();
+const db2 = seed.open();
+const bytes = seed.encode();
+const db3 = Snapshot.decode(bytes).open();
 ```
 
 All methods are **synchronous** — do not `await` them. Browser and Node/Bun share the same in-memory JS surface (no filesystem, no server, no wire protocol).
@@ -79,26 +80,39 @@ From the repo root after that install: `bun run example`.
 ## API
 
 ```ts
-import { Database, PostgresError } from "@crvouga/postgres-mem";
+import { Database, Snapshot, PostgresError } from "@crvouga/postgres-mem";
 
 interface DatabaseOptions {
   seed?: number | bigint;                 // default 1 — ignored when random is "os"
   random?: "deterministic" | "os";        // default "deterministic"; "os" is CSPRNG like PostgreSQL
   now?: Date | (() => Date) | "system";   // default 2000-01-01T00:00:00.000Z; "system" is wall clock
+  int8?: "bigint" | "number" | "string"; // default "bigint"; "number" is unsafe beyond MAX_SAFE_INTEGER
 }
 
 interface Database {
   constructor(options?: DatabaseOptions);
   exec(sql: string): void;
+  registerFunction(spec: {
+    name: string;
+    args: string[];
+    returns: string;
+    strict?: boolean;
+    fn: (...args: JsValue[]) => JsValue;
+  }): void;
   query<T = QueryRow>(sql: string, params?: BindValue[]): T[];
   prepare(sql: string): Statement;
   transaction<T>(fn: () => T): T;
   copyFrom(sql: string, data: string): number;  // COPY t FROM STDIN payload (\copy analog)
-  snapshot(): Uint8Array;
-  restore(snapshot: Uint8Array): void;
+  snapshot(): Snapshot;
   close(): void;
   [Symbol.dispose]?(): void;        // alias for close() when Symbol.dispose exists
   readonly changes: number;         // rows affected by the most recent INSERT/UPDATE/DELETE
+}
+
+class Snapshot {
+  open(options?: DatabaseOptions): Database;
+  encode(): Uint8Array;
+  static decode(bytes: Uint8Array): Snapshot;
 }
 
 interface Statement {
@@ -129,18 +143,22 @@ class PostgresError extends Error {
 }
 ```
 
-Stick to `Database`, `Statement`, and `PostgresError` for application code. Advanced internals (`parse`, `tokenize`, `executeStatement`, snapshot codec pieces, `Prng`, …) are available only from `@crvouga/postgres-mem/unstable` and are **exempt from semver**.
+Stick to `Database`, `Snapshot`, `Statement`, and `PostgresError` for application code. Advanced internals (`parse`, `tokenize`, `executeStatement`, snapshot codec pieces, `Prng`, …) are available only from `@crvouga/postgres-mem/unstable` and are **exempt from semver**.
 
 ### Method semantics
 
 | Method | Behavior |
 | --- | --- |
-| `exec(sql)` | Runs all semicolon-separated statements; **discards** row results (`void`). Does **not** accept bind parameters. Read `db.changes` afterward if needed (reflects the **most recent** completed DML statement). |
+| `exec(sql)` | Runs all semicolon-separated statements; **discards** row results (`void`). Does **not** accept bind parameters. Read `db.changes` afterward if needed (reflects the **most recent** completed DML statement). Dump-only `DO` blocks and `ALTER TABLE … SET (` storage parameters are no-ops. |
+| `registerFunction(spec)` | Install a JavaScript scalar. Not stored in PGMM snapshots; `open()` of a live snapshot copies the impl by reference. |
 | `query(sql, params?)` | **Single statement only** (trailing `;` is fine). Returns all rows. Multi-statement scripts throw `misuse`. |
 | `prepare(sql)` | **Single statement only**. Parses immediately; AST is reused. Pass binds as rest args to `run` / `all` / `get` / `result` on each call. |
 | `transaction(fn)` | If idle: `BEGIN` → `fn()` → `COMMIT`, or `ROLLBACK` + rethrow. If already in a transaction: nested savepoint. Nested SQL `BEGIN` inside is a no-op warning like PostgreSQL. `close()` inside `fn` throws `misuse`. |
 | `copyFrom(sql, data)` | Executes `COPY table [(cols)] FROM STDIN` with `data` as the copy-in payload (text or csv per the COPY options). Returns rows copied. `COPY ... TO STDOUT` output is returned as result rows by `query`. |
-| `snapshot` / `restore` | Custom binary format (see below). |
+| `snapshot()` | Freeze a reusable {@link Snapshot} template (no encode). Illegal inside a transaction (`25P01`). |
+| `Snapshot.open()` | Copy-on-write fork from a template. Parent stays open. |
+| `Snapshot.encode()` | Lazy PGMM blob for persistence / worker boot (computed once, cached). |
+| `Snapshot.decode(bytes)` | Decode a blob once per `Uint8Array` (WeakMap); later `open()` calls are CoW. |
 | `close()` | Idempotent; rolls back an open SQL transaction; further ops throw `misuse`. Also available as `[Symbol.dispose]` when supported. |
 
 SQL `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT` / `RELEASE` are first-class. Empty / comment-only SQL on `prepare` / `query` / `exec` throws `misuse` (`empty statement`).
@@ -174,12 +192,16 @@ Duplicate column names collapse in row objects (last write wins). Use `stmt.resu
 
 ### Snapshots
 
+- `db.snapshot()` returns a frozen in-memory {@link Snapshot}. Per-test isolation should `seed.open()` (copy-on-write, ~µs). Encoded bytes are **lazy** via `snapshot.encode()`.
 - Format magic `PGMM` followed by an explicit little-endian format-version `u32` — **not** `pg_dump` output and not loadable by real PostgreSQL.
-- Round-trips schemas, tables, rows, sequences (counters included), indexes, views, enums, domains, SQL functions, change counters, PRNG state, and clock.
-- Cannot `restore()` while a transaction is open (`25P01`).
-- `restore()` replaces `now` with a fixed clock from the snapshot (a live `() => Date` is overwritten). `{ now: "system" }` stays live after restore.
-- Equivalent databases produce byte-identical snapshots (schema/rows sorted) **within a single library version**.
-- **Compatibility policy:** newer library versions can always restore older snapshots; older libraries cannot restore newer format versions (`snapshot_version`). Corrupt magic yields a distinct error.
+- Round-trips schemas, tables, rows, sequences (counters included), indexes, views, enums, domains, SQL functions, change counters, PRNG state, and clock. JavaScript `registerFunction` impls are omitted.
+- Cannot `snapshot()` while a transaction is open (`25P01`).
+- `Snapshot.decode(bytes)` does not mutate the input `Uint8Array`. The same buffer object is decoded once (WeakMap) and later opens are CoW.
+- `open()` shares frozen tables until either side writes; idle `open().snapshot().encode()` is byte-identical to `snapshot().encode()`.
+- `open()` uses a fixed clock from the snapshot unless you pass `{ now: "system" }`, which stays live.
+- Equivalent databases produce byte-identical `encode()` output (schema/rows sorted) **within a single library version**.
+- Per-test isolation (CI-tier, 200 users + 800 items): `Snapshot.open` ~µs; `encode()` / `decode().open()` is the persistence path. See [benchmarks/PERFORMANCE.md](benchmarks/PERFORMANCE.md).
+- **Compatibility policy:** newer library versions can always decode older snapshots; older libraries cannot decode newer format versions (`snapshot_version`). Corrupt magic yields a distinct error.
 
 ## Determinism
 
@@ -188,7 +210,7 @@ The engine is deterministic by default. Invariants:
 | Source | Default | Override / notes |
 | --- | --- | --- |
 | `random()` / `gen_random_uuid()` | Seeded xorshift64* (`seed: 1`) | `new Database({ seed })` or `{ random: "os" }` for CSPRNG (not rolled back / not restored) |
-| `now()` / `current_timestamp` / friends | Fixed `2000-01-01T00:00:00.000Z` | `new Database({ now: Date \| (() => Date) \| "system" })` — `"system"` is wall clock and is **not** frozen by `restore()` |
+| `now()` / `current_timestamp` / friends | Fixed `2000-01-01T00:00:00.000Z` | `new Database({ now: Date \| (() => Date) \| "system" })` — `"system"` is wall clock and is **not** frozen by `open()` |
 | `setseed()` / `random()` | Deterministic stream | Matches the engine PRNG, repeatable |
 | Table scans | Insertion order | Same order after `snapshot`/`restore` |
 | Snapshots | Sorted schema/rows + PRNG state + clock | Restored into PRNG and `now` |
@@ -228,11 +250,11 @@ This is **not** a drop-in replacement for `pg`, `postgres.js`, or PGlite's clien
 - `COMMENT ON` parses but comments are not stored
 - `round(float8)` rounds ties away from zero (PostgreSQL: half-to-even); numeric `round()` has full parity
 - `'1e400'::float8` saturates to `Infinity` instead of raising `22003`
-- `MERGE`, `CALL`/procedures, cursors (`DECLARE`/`FETCH`), `LISTEN`/`NOTIFY`, PL/pgSQL bodies fail loud (`0A000`)
+- `MERGE`, `CALL`/procedures, cursors (`DECLARE`/`FETCH`), `LISTEN`/`NOTIFY`, and full PL/pgSQL (packages, NOTICE, cursors) fail loud (`0A000`)
 - `VACUUM` / `ANALYZE` / `CLUSTER` / `REINDEX` / `CHECKPOINT` / `GRANT` / `REVOKE` / `LOCK` are parsed no-ops
 - Collation is `C` semantics (byte order); locale/ICU-dependent ordering is out of scope
 
-**Also supported (oracle-parity):** schemas + `search_path`, `pg_catalog` / `information_schema` introspection, sequences (`serial`, identity, `nextval`/`currval`/`setval`), enums, domains, `LANGUAGE sql` functions, row-level triggers, recursive + data-modifying CTEs, window functions with full frame specs, `GROUPING SETS`/`ROLLUP`/`CUBE`, `DISTINCT ON`, `LATERAL`, arrays + `unnest` + subscripting, JSON/JSONB operator + function surface, `tsvector` text search, `ON CONFLICT DO NOTHING/UPDATE`, `RETURNING`, `PREPARE`/`EXECUTE`/`DEALLOCATE`, `SET`/`SHOW`/`RESET` GUCs, `COPY` text and csv.
+**Also supported (oracle-parity):** schemas + `search_path`, `pg_catalog` / `information_schema` introspection, sequences (`serial`, identity, `nextval`/`currval`/`setval`), enums, domains, `LANGUAGE sql` functions, plpgsql-lite UDFs (`DECLARE`, `EXCEPTION WHEN others`, `RETURN NEXT`), row-level triggers, recursive + data-modifying CTEs, window functions with full frame specs, `GROUPING SETS`/`ROLLUP`/`CUBE`, `DISTINCT ON`, `LATERAL`, arrays + `unnest` + subscripting, JSON/JSONB operator + function surface including `jsonb_path_query_first`, `tsvector` text search, `ON CONFLICT DO NOTHING/UPDATE`, `RETURNING`, `PREPARE`/`EXECUTE`/`DEALLOCATE`, `SET`/`SHOW`/`RESET` GUCs, `COPY` text and csv.
 
 ## Common pitfalls
 
@@ -240,10 +262,10 @@ This is **not** a drop-in replacement for `pg`, `postgres.js`, or PGlite's clien
 2. **Parameters are `$1..$n` only** — no `?` placeholders, no named parameters, no sticky `bind()`.
 3. **`query` / `prepare` are single-statement only** — multi-statement scripts belong in `exec()` (which does not take bind parameters).
 4. **`exec` returns `void` and takes no params** — use `db.prepare(…).run(…)` or `db.query(…)` for binds; use `db.changes` / `stmt.run().rowCount` for counters.
-5. **`now()` is not wall-clock** unless you pass `{ now: "system" }` or `{ now: () => new Date() }`. Default is year 2000. `restore()` freezes a snapshot clock except when constructed with `"system"`.
+5. **`now()` is not wall-clock** unless you pass `{ now: "system" }` or `{ now: () => new Date() }`. Default is year 2000. `open()` freezes a snapshot clock except when constructed with `"system"`.
 6. **`random()` is seeded**, not OS entropy, unless you pass `{ random: "os" }`. Snapshots restore the seeded PRNG; OS entropy is not rewound.
 7. **Snapshots are not `pg_dump` output** and cannot be loaded into real PostgreSQL.
-8. **`int8` comes back as `bigint`**, `numeric`/dates/json come back as **text** — parse them explicitly if you need JS numbers/objects.
+8. **`int8` comes back as `bigint` by default** (`{ int8: "number" | "string" }` opts in). `numeric`/dates/json come back as **text** — parse them explicitly if you need JS numbers/objects.
 9. **A failed statement does not abort the transaction** — real PostgreSQL rejects everything after an error inside `BEGIN` until `ROLLBACK`; postgres-mem keeps executing (documented divergence).
 10. **Unquoted identifiers fold to lowercase** (PostgreSQL rule — not uppercase like the SQL standard).
 11. **Do not import `@crvouga/postgres-mem/unstable` in application code** unless you accept breakage in any release.

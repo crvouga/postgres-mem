@@ -11,9 +11,9 @@ Guidance for humans and coding agents editing this repository. For install and c
 1. Custom snapshot codec (`PGMM`), not `pg_dump` / on-disk clusters
 2. Deterministic `random()` / `gen_random_uuid()` and fixed `now()` by default (injectable)
 3. Single-session engine: no MVCC across connections, no wire protocol, no aborted-transaction (`25P02`) state
-4. `NOT APPLICABLE` items: roles/auth enforcement, replication, VACUUM internals, storage params, PL/pgSQL
+4. `NOT APPLICABLE` items: roles/auth enforcement, replication, VACUUM internals, storage params, full PL/pgSQL
 
-**Non-goals:** speaking the wire protocol, matching `pg`/`postgres.js` client APIs, PL/pgSQL, or multi-session concurrency.
+**Non-goals:** speaking the wire protocol, matching `pg`/`postgres.js` client APIs, full PL/pgSQL, or multi-session concurrency.
 
 ## SQL pipeline
 
@@ -39,7 +39,7 @@ Everything is **typed values** (`TypedValue = { t: TypeId, v: Datum }` in [`src/
 | `ast/` | Discriminated-union AST (`nodes.ts`) |
 | `lexer/` | Tokenizer (dollar quoting, E-strings, `::`, operators) |
 | `parser/` | Recursive-descent parser |
-| `executor/` | Statement dispatch, SELECT, DML, DDL, session (SET/SHOW/COPY/PREPARE), triggers, window functions |
+| `executor/` | Statement dispatch, SELECT, DML, DDL, session (SET/SHOW/COPY/PREPARE), triggers, plpgsql-lite UDFs, window functions |
 | `expressions/` | `evalExpr`, operators, pattern matching, `EngineCtx` |
 | `functions/` | Scalar / aggregate / window / datetime / JSON / array / SRF / tsearch registries |
 | `types/` | `TypedValue`, casts, comparison, numeric, datetime, jsonb, timezone |

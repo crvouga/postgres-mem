@@ -1,5 +1,5 @@
 import type { Statement } from "../ast/nodes.ts";
-import { pgError, unsupported } from "../errors/error.ts";
+import { pgError } from "../errors/error.ts";
 // side effect: registers the pg_catalog / information_schema builder
 import "../schema/catalog-tables.ts";
 import "./triggers-exec.ts";
@@ -114,7 +114,7 @@ export function executeStatement(env: ExecEnv, stmt: Statement): ExecResult {
     case "no_op":
       return commandResult(stmt.what.toUpperCase(), 0);
     case "do":
-      throw unsupported(`DO blocks (language ${stmt.language})`);
+      return commandResult("DO", 0);
     default: {
       const t: never = stmt;
       throw pgError("internal", `unhandled statement type ${(t as { type: string }).type}`);

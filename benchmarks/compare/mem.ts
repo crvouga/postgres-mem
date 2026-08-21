@@ -1,4 +1,4 @@
-import { Database, type Statement } from "../../src/index.ts";
+import { Database, Snapshot, type Statement } from "../../src/index.ts";
 import type { BenchEngine, BenchStatement, NamedFactory } from "../harness/types.ts";
 
 type BindValue = Parameters<Statement["run"]>[number];
@@ -12,7 +12,7 @@ function wrapStatement(stmt: Statement): BenchStatement {
 }
 
 export function createMemEngine(): BenchEngine {
-  const db = new Database();
+  let db = new Database();
   return {
     name: "postgres-mem",
     exec: async (sql, params = []) => {
@@ -33,8 +33,11 @@ export function createMemEngine(): BenchEngine {
         throw error;
       }
     },
-    snapshot: async () => db.snapshot(),
-    restore: async (bytes) => db.restore(bytes),
+    snapshot: async () => db.snapshot().encode(),
+    restore: async (bytes) => {
+      db.close();
+      db = Snapshot.decode(bytes).open();
+    },
     close: async () => db.close(),
   };
 }

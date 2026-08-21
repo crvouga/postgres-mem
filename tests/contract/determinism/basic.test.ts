@@ -55,7 +55,7 @@ describe("determinism", () => {
     const right = new Database({ seed: 7 });
     setup(left);
     setup(right);
-    expect([...left.snapshot()]).toEqual([...right.snapshot()]);
+    expect([...left.snapshot().encode()]).toEqual([...right.snapshot().encode()]);
   });
 
   test("Prng streams repeat for equal seeds", () => {
@@ -78,8 +78,7 @@ describe("determinism", () => {
     const snap = source.snapshot();
     const secondOnSource = String(source.query<{ v: number }>("SELECT random() AS v")[0]!.v);
 
-    const restored = new Database({ seed: 999 });
-    restored.restore(snap);
+    const restored = snap.open({ seed: 999 });
     const secondOnRestored = String(restored.query<{ v: number }>("SELECT random() AS v")[0]!.v);
     expect(secondOnRestored).toBe(secondOnSource);
     expect(secondOnRestored).not.toBe(first);
@@ -106,8 +105,7 @@ describe("determinism", () => {
     const idsBefore = db.query<{ id: number }>("SELECT id FROM t").map((row) => row.id);
     const concatBefore = db.query<{ c: string }>("SELECT string_agg(v, ',') AS c FROM t")[0]!.c;
 
-    const restored = new Database();
-    restored.restore(db.snapshot());
+    const restored = db.snapshot().open();
     expect(restored.query<{ id: number }>("SELECT id FROM t").map((row) => row.id)).toEqual(idsBefore);
     expect(restored.query<{ c: string }>("SELECT string_agg(v, ',') AS c FROM t")[0]!.c).toBe(concatBefore);
   });
@@ -115,8 +113,7 @@ describe("determinism", () => {
   test("snapshot restores clock instant", () => {
     const source = new Database({ now: new Date("2019-04-01T00:00:00.000Z") });
     const snap = source.snapshot();
-    const restored = new Database({ now: new Date("1999-01-01T00:00:00.000Z") });
-    restored.restore(snap);
+    const restored = snap.open({ now: new Date("1999-01-01T00:00:00.000Z") });
     expect(restored.query<{ d: string }>("SELECT current_date::text AS d")[0]!.d).toBe("2019-04-01");
   });
 

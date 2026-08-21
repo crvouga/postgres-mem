@@ -52,9 +52,9 @@
     "snapshot/export/small": 1.1,
     "snapshot/hydrate/small": 1.01,
     "snapshot/roundtrip/small": 3.68,
-    "snapshot/export/1mb": 9.3,
-    "snapshot/hydrate/1mb": 6.39,
-    "snapshot/roundtrip/1mb": 16.63,
+    "snapshot/export/1mb": 3,
+    "snapshot/hydrate/1mb": 2.5,
+    "snapshot/roundtrip/1mb": 8,
     "snapshot/fidelity/200": 7.06
   }
 }

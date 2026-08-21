@@ -590,10 +590,11 @@ export function executeCreateView(env: ExecEnv, stmt: CreateViewStmt): ExecResul
 }
 
 export function executeRefreshMatView(env: ExecEnv, stmt: RefreshMaterializedViewStmt): ExecResult {
-  const view = env.ctx.state.findView(stmt.name);
-  if (!view?.materialized) {
+  const found = env.ctx.state.findView(stmt.name);
+  if (!found?.materialized) {
     throw pgError("undefined_table", `materialized view "${stmt.name.join(".")}" does not exist`, "42P01");
   }
+  const view = env.ctx.state.ensureWritableView(found);
   const rel = executeSelectStmt({ ctx: env.ctx, params: null, ctes: new Map(), outer: null }, view.query);
   view.matColumns = rel.columns.map((c, i) => ({
     name: view.columns?.[i] ?? c.name,
@@ -624,10 +625,11 @@ export function executeCreateEnum(env: ExecEnv, stmt: CreateEnumStmt): ExecResul
 }
 
 export function executeAlterEnum(env: ExecEnv, stmt: AlterEnumStmt): ExecResult {
-  const e = env.ctx.state.findEnum(stmt.name);
-  if (!e) {
+  const found = env.ctx.state.findEnum(stmt.name);
+  if (!found) {
     throw pgError("undefined_object", `type "${stmt.name.join(".")}" does not exist`, "42704");
   }
+  const e = env.ctx.state.ensureWritableEnum(found);
   const a = stmt.action;
   if (a.kind === "add_value") {
     if (e.labels.includes(a.label)) {
@@ -758,10 +760,11 @@ export function executeCreateFunction(env: ExecEnv, stmt: CreateFunctionStmt): E
 
 export function executeCreateTrigger(env: ExecEnv, stmt: CreateTriggerStmt): ExecResult {
   const state = env.ctx.state;
-  const table = state.findTable(stmt.table);
-  if (!table) {
+  const found = state.findTable(stmt.table);
+  if (!found) {
     throw pgError("undefined_table", `relation "${stmt.table.join(".")}" does not exist`, "42P01");
   }
+  const table = state.ensureWritableTable(found);
   const fnSchema = stmt.funcName.length >= 2 ? stmt.funcName[stmt.funcName.length - 2]! : null;
   const fnName = stmt.funcName[stmt.funcName.length - 1]!;
   const fns = state.findFunctions(stmt.funcName);
@@ -793,12 +796,13 @@ export function executeCreateTrigger(env: ExecEnv, stmt: CreateTriggerStmt): Exe
 
 export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResult {
   const state = env.ctx.state;
-  const table = state.findTable(stmt.table);
-  if (!table) {
+  const found = state.findTable(stmt.table);
+  if (!found) {
     if (stmt.ifExists) return commandResult("ALTER TABLE", 0);
     // maybe it's a view rename etc.
     throw pgError("undefined_table", `relation "${stmt.table.join(".")}" does not exist`, "42P01");
   }
+  const table = state.ensureWritableTable(found);
   const schema = state.getSchema(table.schema);
 
   for (const action of stmt.actions) {
@@ -1187,6 +1191,8 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
         validateConstraint(env, table, con);
         break;
       }
+      case "reloptions":
+        break;
     }
   }
   return commandResult("ALTER TABLE", 0);
@@ -1452,7 +1458,7 @@ export function executeTruncate(env: ExecEnv, stmt: TruncateStmt): ExecResult {
   const tables: TableData[] = stmt.tables.map((parts) => {
     const t = state.findTable(parts);
     if (!t) throw pgError("undefined_table", `relation "${parts.join(".")}" does not exist`, "42P01");
-    return t;
+    return state.ensureWritableTable(t);
   });
   const set = new Set(tables);
   if (stmt.cascade) {
@@ -1483,13 +1489,15 @@ export function executeTruncate(env: ExecEnv, stmt: TruncateStmt): ExecResult {
     }
   }
   for (const t of set) {
-    t.rows = [];
+    const writable = state.ensureWritableTable(t);
+    writable.rows = [];
     if (stmt.restartIdentity) {
-      const schema = state.getSchema(t.schema);
-      for (const seq of schema.sequences.values()) {
-        if (seq.ownedBy?.table === t.name) {
-          seq.lastValue = seq.startValue;
-          seq.isCalled = false;
+      const schema = state.getSchema(writable.schema);
+      for (const seq of [...schema.sequences.values()]) {
+        if (seq.ownedBy?.table === writable.name) {
+          const wseq = state.ensureWritableSequence(seq);
+          wseq.lastValue = wseq.startValue;
+          wseq.isCalled = false;
         }
       }
     }

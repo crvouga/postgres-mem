@@ -28,8 +28,17 @@ const utf8Encode = (s: string): Uint8Array => TEXT_ENCODER.encode(s);
 const utf8Decode = (b: Uint8Array): string => TEXT_DECODER.decode(b);
 
 const MAGIC = utf8Encode("PGMM");
-/** Snapshot format v1: settings + schemas (tables/rows, views, sequences, enums, domains, functions, indexes) + PRNG state + clock ms. */
-const VERSION = 1;
+/** Snapshot format v1: row-major tagged datums. v2: intern + columnar cells + binary numeric. */
+const VERSION = 2;
+const VERSION_V1 = 1;
+
+const PACK_NULL = 0;
+const PACK_BOOL = 1;
+const PACK_FLOAT = 2;
+const PACK_INT = 3;
+const PACK_TEXT = 4;
+const PACK_BLOB = 5;
+const PACK_TAGGED = 6;
 
 /** PRNG + clock captured alongside catalog/rows in a snapshot. */
 export interface SnapshotRuntime {
@@ -49,8 +58,10 @@ export interface DecodedSnapshot {
 // --- binary writer / reader ---------------------------------------------------
 
 class Writer {
-  private buf = new Uint8Array(1024);
+  private buf = new Uint8Array(4096);
+  private view = new DataView(this.buf.buffer);
   private len = 0;
+  numericBinary = false;
 
   private ensure(needed: number): void {
     if (this.len + needed <= this.buf.length) return;
@@ -59,6 +70,7 @@ class Writer {
     const next = new Uint8Array(cap);
     next.set(this.buf.subarray(0, this.len));
     this.buf = next;
+    this.view = new DataView(next.buffer);
   }
 
   u8(value: number): void {
@@ -67,28 +79,26 @@ class Writer {
   }
   u32(value: number): void {
     this.ensure(4);
-    this.buf[this.len++] = value & 0xff;
-    this.buf[this.len++] = (value >>> 8) & 0xff;
-    this.buf[this.len++] = (value >>> 16) & 0xff;
-    this.buf[this.len++] = (value >>> 24) & 0xff;
+    this.view.setUint32(this.len, value >>> 0, true);
+    this.len += 4;
   }
   i32(value: number): void {
     this.u32(value | 0);
   }
   u64(value: bigint): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setBigUint64(0, BigInt.asUintN(64, value), true);
-    this.raw(bytes);
+    this.ensure(8);
+    this.view.setBigUint64(this.len, BigInt.asUintN(64, value), true);
+    this.len += 8;
   }
   i64(value: bigint): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setBigInt64(0, value, true);
-    this.raw(bytes);
+    this.ensure(8);
+    this.view.setBigInt64(this.len, value, true);
+    this.len += 8;
   }
   f64(value: number): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setFloat64(0, value, true);
-    this.raw(bytes);
+    this.ensure(8);
+    this.view.setFloat64(this.len, value, true);
+    this.len += 8;
   }
   raw(value: Uint8Array): void {
     this.ensure(value.length);
@@ -137,6 +147,20 @@ class Writer {
     switch (value.kind) {
       case "numeric": {
         this.u8(6);
+        if (this.numericBinary) {
+          this.u8(value.special === null ? 0 : value.special === "nan" ? 1 : value.special === "inf" ? 2 : 3);
+          this.u32(value.dscale);
+          const min = -0x8000000000000000n;
+          const max = 0x7fffffffffffffffn;
+          if (value.coef >= min && value.coef <= max) {
+            this.u8(0);
+            this.i64(value.coef);
+          } else {
+            this.u8(1);
+            this.text(value.coef.toString());
+          }
+          return;
+        }
         this.text(value.coef.toString());
         this.u32(value.dscale);
         this.u8(value.special === null ? 0 : value.special === "nan" ? 1 : value.special === "inf" ? 2 : 3);
@@ -194,14 +218,18 @@ class Writer {
 
 class Reader {
   private offset = 0;
-  constructor(private readonly bytes: Uint8Array) {}
+  private readonly view: DataView;
+  numericBinary = false;
+  constructor(private readonly bytes: Uint8Array) {
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
   u8(): number {
     if (this.offset >= this.bytes.length) this.fail();
     return this.bytes[this.offset++]!;
   }
   u32(): number {
     if (this.offset + 4 > this.bytes.length) this.fail();
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset + this.offset, 4).getUint32(0, true);
+    const value = this.view.getUint32(this.offset, true);
     this.offset += 4;
     return value;
   }
@@ -209,22 +237,31 @@ class Reader {
     return this.u32() | 0;
   }
   u64(): bigint {
-    const bytes = this.raw(8);
-    return new DataView(bytes.buffer, bytes.byteOffset, 8).getBigUint64(0, true);
+    if (this.offset + 8 > this.bytes.length) this.fail();
+    const value = this.view.getBigUint64(this.offset, true);
+    this.offset += 8;
+    return value;
   }
   i64(): bigint {
-    const bytes = this.raw(8);
-    return new DataView(bytes.buffer, bytes.byteOffset, 8).getBigInt64(0, true);
+    if (this.offset + 8 > this.bytes.length) this.fail();
+    const value = this.view.getBigInt64(this.offset, true);
+    this.offset += 8;
+    return value;
   }
   f64(): number {
-    const bytes = this.raw(8);
-    return new DataView(bytes.buffer, bytes.byteOffset, 8).getFloat64(0, true);
+    if (this.offset + 8 > this.bytes.length) this.fail();
+    const value = this.view.getFloat64(this.offset, true);
+    this.offset += 8;
+    return value;
   }
   raw(length: number): Uint8Array {
     if (length < 0 || this.offset + length > this.bytes.length) this.fail();
-    const value = this.bytes.slice(this.offset, this.offset + length);
+    const value = this.bytes.subarray(this.offset, this.offset + length);
     this.offset += length;
     return value;
+  }
+  owned(length: number): Uint8Array {
+    return this.raw(length).slice();
   }
   text(): string {
     return utf8Decode(this.raw(this.u32()));
@@ -250,8 +287,16 @@ class Reader {
       case 4:
         return this.text();
       case 5:
-        return this.raw(this.u32());
+        return this.owned(this.u32());
       case 6: {
+        if (this.numericBinary) {
+          const specialTag = this.u8();
+          const special = specialTag === 0 ? null : specialTag === 1 ? "nan" : specialTag === 2 ? "inf" : "-inf";
+          const dscale = this.u32();
+          const compact = this.u8() === 0;
+          const coef = compact ? this.i64() : BigInt(this.text());
+          return { kind: "numeric", coef, dscale, special } satisfies Numeric;
+        }
         const coef = BigInt(this.text());
         const dscale = this.u32();
         const specialTag = this.u8();
@@ -353,26 +398,168 @@ interface FunctionMetaJson {
  * (not an on-disk PostgreSQL format).
  *
  * Prefer {@link Database.snapshot} unless you are serializing engine state directly.
+ * Pass `formatVersion` 1 to emit a legacy blob for hydrate tests.
  */
-export function encodeDatabaseState(state: DatabaseState, runtime: SnapshotRuntime): Uint8Array {
-  const w = new Writer();
+export function encodeDatabaseState(
+  state: DatabaseState,
+  runtime: SnapshotRuntime,
+  formatVersion: number = VERSION,
+): Uint8Array {
+  if (formatVersion >= 2) return encodeV2(state, runtime);
+  return encodeV1(state, runtime);
+}
+
+function writeHeader(w: Writer, state: DatabaseState, version: number): void {
   w.raw(MAGIC);
-  w.u32(VERSION);
-  w.u32((state as unknown as { oidCounter: number }).oidCounter);
+  w.u32(version);
+  w.u32(state.snapshotOidCounter());
   w.u32(state.changes);
-  // session settings, sorted for byte-identical snapshots
   const settings = [...state.settings.entries()].sort((a, b) => compareNames(a[0], b[0]));
   w.u32(settings.length);
   for (const [k, v] of settings) {
     w.text(k);
     w.text(v);
   }
+}
+
+function writeTail(w: Writer, state: DatabaseState, runtime: SnapshotRuntime): void {
+  if (state.lastSequence === null) {
+    w.u8(0);
+  } else {
+    w.u8(1);
+    w.text(state.lastSequence.schema);
+    w.text(state.lastSequence.name);
+  }
+  w.u64(runtime.prngState);
+  w.i64(BigInt(Math.trunc(runtime.nowMs)));
+}
+
+function writeRowMajorTable(w: Writer, t: TableData): void {
+  w.json({
+    name: t.name,
+    schema: t.schema,
+    columns: t.columns,
+    constraints: t.constraints,
+    triggers: t.triggers,
+    temp: t.temp,
+    oid: t.oid,
+  } satisfies TableMetaJson);
+  w.u32(t.rows.length);
+  for (const row of t.rows) {
+    w.u32(row.length);
+    for (const d of row) w.datum(d);
+  }
+}
+
+function writeRowMajorView(w: Writer, v: ViewData): void {
+  w.json({
+    name: v.name,
+    schema: v.schema,
+    query: v.query,
+    columns: v.columns,
+    materialized: v.materialized,
+    matColumns: v.matColumns,
+    temp: v.temp,
+    oid: v.oid,
+  } satisfies ViewMetaJson);
+  if (v.matRows === null) {
+    w.u8(0);
+  } else {
+    w.u8(1);
+    w.u32(v.matRows.length);
+    for (const row of v.matRows) {
+      w.u32(row.length);
+      for (const d of row) w.datum(d);
+    }
+  }
+}
+
+function writeSchemaCatalog(w: Writer, schema: SchemaData): void {
+  const sequences = sortedValues(schema.sequences);
+  w.u32(sequences.length);
+  for (const s of sequences) w.json(s);
+
+  const enums = sortedValues(schema.enums);
+  w.u32(enums.length);
+  for (const e of enums) w.json(e);
+
+  const domains = sortedValues(schema.domains);
+  w.u32(domains.length);
+  for (const d of domains) w.json(d);
+
+  const functionEntries = [...schema.functions.entries()]
+    .map(([key, overloads]) => [key, overloads.filter((f) => f.language !== "js")] as const)
+    .filter((entry) => entry[1].length > 0)
+    .sort((a, b) => compareNames(a[0], b[0]));
+  w.u32(functionEntries.length);
+  for (const [key, overloads] of functionEntries) {
+    w.text(key);
+    w.u32(overloads.length);
+    for (const f of overloads) w.json(f satisfies FunctionMetaJson);
+  }
+
+  const indexes = sortedValues(schema.indexes);
+  w.u32(indexes.length);
+  for (const idx of indexes) w.json(idx);
+}
+
+function encodeV1(state: DatabaseState, runtime: SnapshotRuntime): Uint8Array {
+  const w = new Writer();
+  writeHeader(w, state, VERSION_V1);
   const schemas = [...state.schemas.values()].sort((a, b) => compareNames(a.name, b.name));
   w.u32(schemas.length);
   for (const schema of schemas) {
     w.text(schema.name);
     w.u32(schema.oid);
+    const tables = sortedValues(schema.tables);
+    w.u32(tables.length);
+    for (const t of tables) writeRowMajorTable(w, t);
+    const views = sortedValues(schema.views);
+    w.u32(views.length);
+    for (const v of views) writeRowMajorView(w, v);
+    writeSchemaCatalog(w, schema);
+  }
+  writeTail(w, state, runtime);
+  return w.finish();
+}
 
+function encodeV2(state: DatabaseState, runtime: SnapshotRuntime): Uint8Array {
+  const intern = new Map<string, number>();
+  const internList: string[] = [];
+  const internId = (s: string): number => {
+    const hit = intern.get(s);
+    if (hit !== undefined) return hit;
+    const id = internList.length;
+    intern.set(s, id);
+    internList.push(s);
+    return id;
+  };
+  internId("");
+
+  const schemas = [...state.schemas.values()].sort((a, b) => compareNames(a.name, b.name));
+  for (const schema of schemas) {
+    for (const t of schema.tables.values()) {
+      for (const row of t.rows) {
+        for (const d of row) if (typeof d === "string") internId(d);
+      }
+    }
+    for (const v of schema.views.values()) {
+      if (!v.matRows) continue;
+      for (const row of v.matRows) {
+        for (const d of row) if (typeof d === "string") internId(d);
+      }
+    }
+  }
+
+  const w = new Writer();
+  w.numericBinary = true;
+  writeHeader(w, state, VERSION);
+  w.u32(internList.length);
+  for (const s of internList) w.text(s);
+  w.u32(schemas.length);
+  for (const schema of schemas) {
+    w.text(schema.name);
+    w.u32(schema.oid);
     const tables = sortedValues(schema.tables);
     w.u32(tables.length);
     for (const t of tables) {
@@ -386,12 +573,8 @@ export function encodeDatabaseState(state: DatabaseState, runtime: SnapshotRunti
         oid: t.oid,
       } satisfies TableMetaJson);
       w.u32(t.rows.length);
-      for (const row of t.rows) {
-        w.u32(row.length);
-        for (const d of row) w.datum(d);
-      }
+      for (let c = 0; c < t.columns.length; c++) writePackedColumn(w, t.rows, c, internId);
     }
-
     const views = sortedValues(schema.views);
     w.u32(views.length);
     for (const v of views) {
@@ -409,49 +592,84 @@ export function encodeDatabaseState(state: DatabaseState, runtime: SnapshotRunti
         w.u8(0);
       } else {
         w.u8(1);
+        const width = v.matColumns?.length ?? v.matRows[0]?.length ?? 0;
         w.u32(v.matRows.length);
-        for (const row of v.matRows) {
-          w.u32(row.length);
-          for (const d of row) w.datum(d);
-        }
+        w.u32(width);
+        for (let c = 0; c < width; c++) writePackedColumn(w, v.matRows, c, internId);
       }
     }
-
-    const sequences = sortedValues(schema.sequences);
-    w.u32(sequences.length);
-    for (const s of sequences) w.json(s);
-
-    const enums = sortedValues(schema.enums);
-    w.u32(enums.length);
-    for (const e of enums) w.json(e);
-
-    const domains = sortedValues(schema.domains);
-    w.u32(domains.length);
-    for (const d of domains) w.json(d);
-
-    const functionKeys = [...schema.functions.keys()].sort(compareNames);
-    w.u32(functionKeys.length);
-    for (const key of functionKeys) {
-      w.text(key);
-      const overloads = schema.functions.get(key)!;
-      w.u32(overloads.length);
-      for (const f of overloads) w.json(f satisfies FunctionMetaJson);
-    }
-
-    const indexes = sortedValues(schema.indexes);
-    w.u32(indexes.length);
-    for (const idx of indexes) w.json(idx);
+    writeSchemaCatalog(w, schema);
   }
-  if (state.lastSequence === null) {
-    w.u8(0);
-  } else {
-    w.u8(1);
-    w.text(state.lastSequence.schema);
-    w.text(state.lastSequence.name);
-  }
-  w.u64(runtime.prngState);
-  w.i64(BigInt(Math.trunc(runtime.nowMs)));
+  writeTail(w, state, runtime);
   return w.finish();
+}
+
+function writePackedColumn(w: Writer, rows: Datum[][], col: number, internId: (s: string) => number): void {
+  const n = rows.length;
+  if (n === 0) {
+    w.u8(PACK_NULL);
+    return;
+  }
+  const bits = new Uint8Array((n + 7) >> 3);
+  let nulls = 0;
+  let kind: number | null = null;
+  for (let i = 0; i < n; i++) {
+    const value = rows[i]![col] ?? null;
+    if (value === null) {
+      bits[i >> 3] = (bits[i >> 3]! | (1 << (i & 7))) as number;
+      nulls++;
+      continue;
+    }
+    const cellKind = packKindOf(value);
+    if (kind === null) kind = cellKind;
+    else if (kind !== cellKind) kind = PACK_TAGGED;
+  }
+  if (nulls === n) {
+    w.u8(PACK_NULL);
+    return;
+  }
+  const pack = kind ?? PACK_TAGGED;
+  w.u8(pack);
+  w.raw(bits);
+  for (let i = 0; i < n; i++) {
+    if (bits[i >> 3]! & (1 << (i & 7))) continue;
+    writePackedCell(w, pack, rows[i]![col]!, internId);
+  }
+}
+
+function packKindOf(value: Datum): number {
+  if (typeof value === "boolean") return PACK_BOOL;
+  if (typeof value === "number") return PACK_FLOAT;
+  if (typeof value === "bigint") return PACK_INT;
+  if (typeof value === "string") return PACK_TEXT;
+  if (value instanceof Uint8Array) return PACK_BLOB;
+  return PACK_TAGGED;
+}
+
+function writePackedCell(w: Writer, pack: number, value: Datum, internId: (s: string) => number): void {
+  if (pack === PACK_BOOL) {
+    w.u8(value ? 1 : 0);
+    return;
+  }
+  if (pack === PACK_FLOAT) {
+    w.f64(value as number);
+    return;
+  }
+  if (pack === PACK_INT) {
+    w.i64(value as bigint);
+    return;
+  }
+  if (pack === PACK_TEXT) {
+    w.u32(internId(value as string));
+    return;
+  }
+  if (pack === PACK_BLOB) {
+    const blob = value as Uint8Array;
+    w.u32(blob.length);
+    w.raw(blob);
+    return;
+  }
+  w.datum(value);
 }
 
 // --- decode --------------------------------------------------------------------
@@ -477,11 +695,12 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
     throw new PostgresError("snapshot_format", "invalid postgres-mem snapshot magic", "XX000");
   }
   const version = r.u32();
-  if (version !== VERSION) {
+  if (version < VERSION_V1 || version > VERSION) {
     throw new PostgresError("snapshot_version", `unsupported postgres-mem snapshot version: ${version}`, "XX000");
   }
+  r.numericBinary = version >= 2;
   const state = new DatabaseState(prng, clock);
-  (state as unknown as { oidCounter: number }).oidCounter = r.u32();
+  state.restoreOidCounter(r.u32());
   state.changes = r.u32();
   state.settings = new Map();
   const settingCount = r.u32();
@@ -490,6 +709,12 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
     state.settings.set(k, r.text());
   }
   state.schemas = new Map();
+  let intern: string[] = [];
+  if (version >= 2) {
+    const internCount = r.u32();
+    intern = [];
+    for (let i = 0; i < internCount; i++) intern.push(r.text());
+  }
   const schemaCount = r.u32();
   for (let si = 0; si < schemaCount; si++) {
     const schema = new SchemaData(r.text(), r.u32());
@@ -501,12 +726,23 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
       table.constraints = meta.constraints;
       table.triggers = meta.triggers;
       const rowCount = r.u32();
-      for (let ri = 0; ri < rowCount; ri++) {
-        const width = r.u32();
-        if (width !== meta.columns.length) throw snapshotError();
-        const row: Datum[] = [];
-        for (let ci = 0; ci < width; ci++) row.push(r.datum());
-        table.rows.push(row);
+      if (version >= 2) {
+        const width = meta.columns.length;
+        const cols: Datum[][] = [];
+        for (let c = 0; c < width; c++) cols.push(readPackedColumn(r, rowCount, intern));
+        for (let ri = 0; ri < rowCount; ri++) {
+          const row: Datum[] = [];
+          for (let c = 0; c < width; c++) row.push(cols[c]![ri] ?? null);
+          table.rows.push(row);
+        }
+      } else {
+        for (let ri = 0; ri < rowCount; ri++) {
+          const width = r.u32();
+          if (width !== meta.columns.length) throw snapshotError();
+          const row: Datum[] = [];
+          for (let ci = 0; ci < width; ci++) row.push(r.datum());
+          table.rows.push(row);
+        }
       }
       schema.tables.set(table.name, table);
     }
@@ -518,11 +754,22 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
       if (r.u8() === 1) {
         matRows = [];
         const rowCount = r.u32();
-        for (let ri = 0; ri < rowCount; ri++) {
+        if (version >= 2) {
           const width = r.u32();
-          const row: Datum[] = [];
-          for (let ci = 0; ci < width; ci++) row.push(r.datum());
-          matRows.push(row);
+          const cols: Datum[][] = [];
+          for (let c = 0; c < width; c++) cols.push(readPackedColumn(r, rowCount, intern));
+          for (let ri = 0; ri < rowCount; ri++) {
+            const row: Datum[] = [];
+            for (let c = 0; c < width; c++) row.push(cols[c]![ri] ?? null);
+            matRows.push(row);
+          }
+        } else {
+          for (let ri = 0; ri < rowCount; ri++) {
+            const width = r.u32();
+            const row: Datum[] = [];
+            for (let ci = 0; ci < width; ci++) row.push(r.datum());
+            matRows.push(row);
+          }
         }
       }
       const view: ViewData = { ...meta, matRows };
@@ -566,15 +813,51 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
   }
   state.lastSequence = r.u8() === 1 ? { schema: r.text(), name: r.text() } : null;
   if (r.remaining() < 16) throw snapshotError();
-  const runtime: SnapshotRuntime = { prngState: r.u64(), nowMs: Number(r.i64()) };
+  const runtime: SnapshotRuntime = { prngState: r.u64(), nowMs: finiteNowMs(Number(r.i64())) };
   if (!r.done()) throw new PostgresError("snapshot_format", "snapshot has trailing data", "XX000");
   return { state, runtime };
+}
+
+function readPackedColumn(reader: Reader, n: number, intern: string[]): Datum[] {
+  const pack = reader.u8();
+  const out: Datum[] = new Array(n);
+  if (pack === PACK_NULL) {
+    for (let i = 0; i < n; i++) out[i] = null;
+    return out;
+  }
+  const bits = reader.raw((n + 7) >> 3);
+  for (let i = 0; i < n; i++) {
+    if (bits[i >> 3]! & (1 << (i & 7))) {
+      out[i] = null;
+      continue;
+    }
+    out[i] = readPackedCell(reader, pack, intern);
+  }
+  return out;
+}
+
+function readPackedCell(reader: Reader, pack: number, intern: string[]): Datum {
+  if (pack === PACK_BOOL) return reader.u8() !== 0;
+  if (pack === PACK_FLOAT) return reader.f64();
+  if (pack === PACK_INT) return reader.i64();
+  if (pack === PACK_TEXT) return intern[reader.u32()] ?? "";
+  if (pack === PACK_BLOB) return reader.owned(reader.u32());
+  return reader.datum();
 }
 
 // --- helpers -------------------------------------------------------------------
 
 function snapshotError(): PostgresError {
   return new PostgresError("snapshot_format", "invalid or truncated postgres-mem snapshot", "XX000");
+}
+
+function finiteNowMs(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  // Date only accepts ±1e8 days from epoch; out-of-range values become NaN.
+  const max = 8.64e15;
+  if (value > max) return max;
+  if (value < -max) return -max;
+  return value;
 }
 
 /** Locale-independent UTF-16 code-unit order for stable snapshot encoding. */
@@ -586,7 +869,8 @@ function sortedValues<T extends { name: string }>(map: Map<string, T>): T[] {
   return [...map.values()].sort((a, b) => compareNames(a.name, b.name));
 }
 
-function jsonReplacer(_key: string, value: unknown): unknown {
+function jsonReplacer(key: string, value: unknown): unknown {
+  if (key === "shareCount" || key === "jsImpl") return undefined;
   if (typeof value === "bigint") return { $pgmm: "bigint", value: value.toString() };
   if (value instanceof Uint8Array) return { $pgmm: "bytes", value: Array.from(value) };
   return value;

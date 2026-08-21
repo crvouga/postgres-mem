@@ -30,7 +30,7 @@
     {
       "id": "pgmm-snapshot-codec",
       "scope": "engine",
-      "predicate": "snapshot()/restore() use the custom PGMM binary codec (magic 'PGMM' + LE u32 version), not pg_dump or the on-disk PostgreSQL format",
+      "predicate": "snapshot()/encode()/decode() use the custom PGMM binary codec (magic 'PGMM' + LE u32 version), not pg_dump or the on-disk PostgreSQL format",
       "specifiedBehavior": "Snapshots are byte-identical for equivalent logical state, refuse corrupt/truncated/future-version blobs, and cannot run inside a transaction. No PostgreSQL equivalent exists; tests assert memory behavior only.",
       "pinnedBy": [
         "SNP-rt-01",
@@ -44,7 +44,8 @@
         "SNP-hdr-03",
         "SNP-hdr-04",
         "SNP-txn-01",
-        "SNP-rep-01",
+        "SNP-open-01",
+        "SNP-open-02",
         "tests/contract/snapshots/basic.test.ts"
       ]
     },
@@ -93,8 +94,18 @@
         "API-txn-02",
         "API-sync-01",
         "API-copy-01",
+        "API-int8-01",
+        "API-int8-02",
+        "API-fn-01",
         "tests/contract/api/basic.test.ts"
       ]
+    },
+    {
+      "id": "dump-compat-noop",
+      "scope": "sql",
+      "predicate": "DO blocks and ALTER TABLE SET (storage/reloptions) execute as no-ops so schema dumps can load without intercepts; PL/pgSQL and storage parameters are NOT APPLICABLE",
+      "specifiedBehavior": "exec() loads schema dumps. DO $$ … $$ and ALTER TABLE … SET (fillfactor=…) succeed and change nothing. PGlite executes plpgsql; these cases are memory-only.",
+      "pinnedBy": ["API-dump-01", "API-do-01", "API-set-01"]
     },
     {
       "id": "empty-script-rejected",

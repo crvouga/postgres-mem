@@ -78,7 +78,8 @@ export function snapshotSpecs(): BenchSpec[] {
         },
         fn: async (engine, ctx) => {
           const state = ctx as { bytes: Uint8Array; after?: ReturnType<typeof sampleMemory> };
-          await engine.restore(state.bytes);
+          // New view so WeakMap hydrate cache does not turn this into a CoW open.
+          await engine.restore(state.bytes.subarray(0));
           state.after = sampleMemory();
         },
         extra: (ctx) => {

@@ -3,6 +3,9 @@ import type { Clock } from "./clock.ts";
 /** Entropy source for `random()` / `gen_random_uuid()`. Default is seeded xorshift64*. */
 export type RandomMode = "deterministic" | "os";
 
+/** How `int8` columns surface in query row objects. Default `"bigint"`. */
+export type Int8Mode = "bigint" | "number" | "string";
+
 /** Options for {@link Database} construction. All fields are optional. */
 export interface DatabaseOptions {
   /**
@@ -22,6 +25,13 @@ export interface DatabaseOptions {
    * Pass a `Date`, `() => Date`, or `"system"` for wall-clock `now()` like PostgreSQL.
    */
   now?: Date | Clock | "system";
+  /**
+   * How `int8` / `bigint` columns surface in query row objects.
+   * Default `"bigint"` matches PostgreSQL's JS-unsafe 64-bit integers.
+   * `"number"` uses IEEE number (unsafe beyond `Number.MAX_SAFE_INTEGER`).
+   * `"string"` is JSON-safe.
+   */
+  int8?: Int8Mode;
 }
 
 /** Default {@link DatabaseOptions.seed} when constructing a {@link Database}. */

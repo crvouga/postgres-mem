@@ -1,3 +1,4 @@
+import type { Int8Mode } from "../runtime/options.ts";
 import { pgError } from "../errors/error.ts";
 import { UNIX_EPOCH_MICROS_FROM_PG } from "../types/datetime.ts";
 import { type Datum, datumText, type OutputCtx, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
@@ -53,7 +54,7 @@ export function bindValueToTyped(value: BindValue, index: number): TypedValue {
 }
 
 /** Convert an engine datum to the public JS value for result rows. */
-export function datumToJs(t: TypeId, v: Datum, ctx: OutputCtx): JsValue {
+export function datumToJs(t: TypeId, v: Datum, ctx: OutputCtx, int8: Int8Mode = "bigint"): JsValue {
   if (v === null) return null;
   switch (t) {
     case "bool":
@@ -62,8 +63,12 @@ export function datumToJs(t: TypeId, v: Datum, ctx: OutputCtx): JsValue {
     case "int4":
     case "oid":
       return typeof v === "bigint" ? Number(v) : (v as number);
-    case "int8":
-      return typeof v === "bigint" ? v : BigInt(v as number);
+    case "int8": {
+      const n = typeof v === "bigint" ? v : BigInt(v as number);
+      if (int8 === "string") return n.toString();
+      if (int8 === "number") return Number(n);
+      return n;
+    }
     case "float4":
     case "float8":
       return v as number;

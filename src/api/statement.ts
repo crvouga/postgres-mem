@@ -139,7 +139,7 @@ export class Statement {
       const obj: QueryRow = {};
       for (let i = 0; i < res.columns.length; i++) {
         const c = res.columns[i]!;
-        obj[c.name] = datumToJs(c.type, row[i] ?? null, ctx);
+        obj[c.name] = datumToJs(c.type, row[i] ?? null, ctx, this.database.int8Mode);
       }
       return obj;
     });

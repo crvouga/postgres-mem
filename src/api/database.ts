@@ -7,14 +7,19 @@ import {
   type Clock,
   type DatabaseOptions,
   DEFAULT_DATABASE_SEED,
+  type Int8Mode,
   OsEntropy,
   Prng,
   type RandomMode,
   resolveClock,
 } from "../runtime/index.ts";
+import type { FunctionData } from "../storage/database-state.ts";
 import { DatabaseState } from "../storage/database-state.ts";
 import type { TransactionManager } from "../transactions/manager.ts";
-import type { BindValue, QueryRow } from "./bind.ts";
+import { resolveTypeName } from "../types/resolve.ts";
+import type { TypeId } from "../types/value.ts";
+import type { BindValue, JsValue, QueryRow } from "./bind.ts";
+import { captureSnapshot, type Snapshot } from "./snapshot.ts";
 import { Statement } from "./statement.ts";
 
 /**
@@ -35,6 +40,23 @@ import { Statement } from "./statement.ts";
  * const users = db.query<{ id: number; name: string }>("SELECT * FROM users");
  * ```
  */
+const ADOPT = Symbol("postgres-mem.adopt");
+
+interface AdoptedDatabase {
+  readonly [ADOPT]: true;
+  readonly state: DatabaseState;
+  readonly prng: Prng;
+  readonly now: Clock;
+  readonly seed: number | bigint;
+  readonly randomMode: RandomMode;
+  readonly systemClock: boolean;
+  readonly int8Mode: Int8Mode;
+}
+
+function isAdopted(value: object): value is AdoptedDatabase {
+  return ADOPT in value;
+}
+
 export class Database {
   /** @internal Engine catalog, tables, session settings. */
   readonly state: DatabaseState;
@@ -44,6 +66,8 @@ export class Database {
   readonly randomMode: RandomMode;
   /** @internal true when `now` follows the wall clock. */
   readonly systemClock: boolean;
+  /** How `int8` columns surface in query rows. */
+  readonly int8Mode: Int8Mode;
   /** @internal PRNG backing `random()` and friends. */
   readonly prng: Prng;
   /** @internal Clock used by `now()` / `current_timestamp`. */
@@ -55,9 +79,23 @@ export class Database {
   private apiTransactionDepth = 0;
 
   constructor(options: DatabaseOptions = {}) {
+    if (isAdopted(options)) {
+      this.seed = options.seed;
+      this.randomMode = options.randomMode;
+      this.systemClock = options.systemClock;
+      this.int8Mode = options.int8Mode;
+      this.prng = options.prng;
+      this.now = options.now;
+      this.state = options.state;
+      this.state.prng = this.prng;
+      this.state.clock = () => this.now();
+      this.transactions = txManagerFor(this.state);
+      return;
+    }
     this.seed = options.seed ?? DEFAULT_DATABASE_SEED;
     this.randomMode = options.random ?? "deterministic";
     this.systemClock = options.now === "system";
+    this.int8Mode = options.int8 ?? "bigint";
     this.prng = this.randomMode === "os" ? new OsEntropy() : new Prng(this.seed);
     this.now = resolveClock(options.now);
     this.state = new DatabaseState(this.prng, () => this.now());
@@ -75,6 +113,49 @@ export class Database {
       throw pgError("misuse", "exec() does not accept parameters; use prepare() or query()", "XX000");
     }
     Statement.createFromSql(this, sql).run();
+  }
+
+  /**
+   * Register a JavaScript function callable from SQL. Not encoded in PGMM
+   * snapshots — re-register after {@link Snapshot.decode} / {@link Snapshot.open}.
+   * {@link Snapshot.open} copies the implementation by reference when opening
+   * a live in-memory snapshot.
+   */
+  registerFunction(spec: RegisterFunctionOptions): void {
+    this.assertOpen();
+    const parts = spec.name
+      .split(".")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (parts.length === 0) throw pgError("syntax", "function name is required", "42601");
+    const schemaName = parts.length >= 2 ? parts[0]! : this.state.currentSchema();
+    const name = parts[parts.length - 1]!.toLowerCase();
+    const schema = this.state.getSchema(schemaName.toLowerCase());
+    const argTypes: TypeId[] = spec.args.map((a) => resolveTypeName(this.state, parseTypeName(a)).column.id);
+    const returns = resolveTypeName(this.state, parseTypeName(spec.returns)).column.id;
+    const fn: FunctionData = {
+      name,
+      schema: schema.name,
+      argNames: spec.args.map(() => null),
+      argTypes,
+      argDefaults: argTypes.map(() => null),
+      returns,
+      returnsSet: false,
+      returnsTable: null,
+      language: "js",
+      body: null,
+      rawBody: null,
+      strict: spec.strict ?? true,
+      oid: this.state.nextOid(),
+      jsImpl: spec.fn,
+    };
+    const existing = schema.functions.get(name) ?? [];
+    const sameSig = existing.findIndex(
+      (f) => f.argTypes.length === argTypes.length && f.argTypes.every((t, i) => t === argTypes[i]),
+    );
+    if (sameSig !== -1) existing[sameSig] = fn;
+    else existing.push(fn);
+    schema.functions.set(name, existing);
   }
 
   /** Execute a single-statement query and return all rows keyed by column name. */
@@ -125,34 +206,24 @@ export class Database {
   }
 
   /**
-   * Serialize schema, rows, PRNG state, and clock into a `PGMM` snapshot blob.
-   * Restore with {@link restore}. Not an on-disk PostgreSQL format.
+   * Freeze this database into a reusable {@link Snapshot} template.
+   * Does not encode PGMM bytes. Call {@link Snapshot.encode} to persist, or
+   * {@link Snapshot.open} for a copy-on-write fork.
    */
-  snapshot(): Uint8Array {
-    this.assertOpen();
-    const { encodeDatabaseState } = requireCodec();
-    return encodeDatabaseState(this.state, {
-      prngState: this.prng.getState(),
-      nowMs: this.now().getTime(),
-    });
-  }
-
-  /** Replace this database's contents with a blob from {@link snapshot}. */
-  restore(snapshot: Uint8Array): void {
+  snapshot(): Snapshot {
     this.assertOpen();
     if (this.transactions.inTransaction) {
-      throw pgError("transaction_state", "cannot restore during a transaction", "25P01");
+      throw pgError("transaction_state", "cannot snapshot during a transaction", "25P01");
     }
-    const { decodeDatabaseState } = requireCodec();
-    const decoded = decodeDatabaseState(snapshot, this.prng, () => this.now());
-    this.state.restoreFrom(decoded.state);
-    if (decoded.runtime) {
-      this.prng.setState(decoded.runtime.prngState);
-      if (!this.systemClock) {
-        const ms = decoded.runtime.nowMs;
-        this.now = () => new Date(ms);
-      }
-    }
+    return captureSnapshot(
+      this.state,
+      this.prng,
+      this.now,
+      this.seed,
+      this.randomMode,
+      this.systemClock,
+      this.int8Mode,
+    );
   }
 
   /** Close the database. Further SQL throws. Idempotent. */
@@ -230,11 +301,45 @@ export function registerCodec(m: CodecModule): void {
   codec = m;
 }
 
-function requireCodec(): CodecModule {
+/** @internal */
+export function requireCodec(): CodecModule {
   if (!codec) {
     throw new PostgresError("unsupported", "snapshot codec not loaded");
   }
   return codec;
+}
+
+/** @internal Used by {@link Snapshot.open}. */
+export function createAdoptedDatabase(opts: Omit<AdoptedDatabase, typeof ADOPT>): Database {
+  return new Database({
+    [ADOPT]: true,
+    ...opts,
+  } as DatabaseOptions);
+}
+
+export { Snapshot } from "./snapshot.ts";
+
+/** Options for {@link Database.registerFunction}. */
+export interface RegisterFunctionOptions {
+  name: string;
+  args: string[];
+  returns: string;
+  strict?: boolean;
+  fn: (...args: JsValue[]) => JsValue;
+}
+
+function parseTypeName(raw: string): { parts: string[]; mods: number[]; arrayDims: number } {
+  let s = raw.trim().toLowerCase();
+  let arrayDims = 0;
+  while (s.endsWith("[]")) {
+    arrayDims++;
+    s = s.slice(0, -2).trimEnd();
+  }
+  const parts = s
+    .split(".")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  return { parts, mods: [], arrayDims };
 }
 
 const disposeKey = (Symbol as unknown as { dispose?: symbol }).dispose;

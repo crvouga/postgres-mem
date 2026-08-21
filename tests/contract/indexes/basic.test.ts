@@ -62,3 +62,18 @@ parity(
   ["CREATE TABLE t (id int, v text)", "CREATE UNIQUE INDEX t_id ON t (id)", "INSERT INTO t VALUES (1, 'old')"],
   "INSERT INTO t VALUES (1, 'new') ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v RETURNING id, v",
 );
+
+sequenceParity(
+  "upsert then secondary-column equality still returns the row",
+  [
+    "CREATE TABLE t (id int PRIMARY KEY, user_id text, v text)",
+    "CREATE INDEX t_user ON t (user_id)",
+    "INSERT INTO t VALUES (1, 'bob', 'old')",
+  ],
+  [
+    {
+      sql: "INSERT INTO t VALUES (1, 'bob', 'new') ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, v = EXCLUDED.v",
+    },
+    { sql: "SELECT id, v FROM t WHERE user_id = $1", query: true, params: ["bob"] },
+  ],
+);

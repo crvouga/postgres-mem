@@ -25,4 +25,10 @@ export const API_SECTION: CatalogSection = section("API", "JavaScript surface co
   ["txn-02", "nested transaction(fn) uses savepoints", D, "JS API surface, no oracle analog", undefined, DIV],
   ["sync-01", "methods return values, not Promises", D, "JS API surface, no oracle analog", undefined, DIV],
   ["copy-01", "copyFrom API loads COPY FROM STDIN data", D, "API-level COPY hook", ["tests/contract/copy/"], DIV],
+  ["int8-01", "int8 mode number surfaces IEEE number", D, "JS API overlay, no oracle analog", undefined, DIV],
+  ["int8-02", "int8 mode string surfaces decimal text", D, "JS API overlay, no oracle analog", undefined, DIV],
+  ["fn-01", "registerFunction installs a JS scalar", D, "JS API overlay, not in PGMM", undefined, DIV],
+  ["dump-01", "exec loads dump no-ops", D, "dump-compat overlay", undefined, "dump-compat-noop"],
+  ["do-01", "DO blocks are no-ops", D, "PL/pgSQL is NOT APPLICABLE", undefined, "dump-compat-noop"],
+  ["set-01", "ALTER TABLE SET storage parameters are no-ops", D, "storage params are NOT APPLICABLE", undefined, "dump-compat-noop"],
 ]);

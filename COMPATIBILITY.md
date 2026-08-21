@@ -34,9 +34,9 @@ Anything a PostgreSQL application can invoke through SQL against the PGlite **18
 1. **Snapshot format** — custom binary codec (`PGMM`), not `pg_dump` / on-disk clusters (logical state still round-trips).
 2. **Deterministic `random()` / `now()`** — seeded PRNG and fixed clock by default (injectable).
 3. **Single session** — no MVCC across connections, no isolation levels beyond one session, no `25P02` aborted-transaction state (documented divergence).
-4. **NOT APPLICABLE** rows in `compat/coverage.json` (roles, replication, VACUUM internals, LISTEN/NOTIFY, cursors, PL/pgSQL, extensions).
+4. **NOT APPLICABLE** rows in `compat/coverage.json` (roles, replication, VACUUM internals, LISTEN/NOTIFY, cursors, full PL/pgSQL, extensions).
 
-The oracle exposes **2787 builtin functions** and **74 operators** in `pg_catalog`; postgres-mem implements **301 functions** and **41 operators**, and every remaining item is an explicit entry in [`compat/unsupported-register.json`](compat/unsupported-register.json) with a reason (trigger/internal plumbing, admin/monitoring, unsupported type families, …). The gate fails closed on silence.
+The oracle exposes **2787 builtin functions** and **74 operators** in `pg_catalog`; postgres-mem implements **302 functions** and **41 operators**, and every remaining item is an explicit entry in [`compat/unsupported-register.json`](compat/unsupported-register.json) with a reason (trigger/internal plumbing, admin/monitoring, unsupported type families, …). The gate fails closed on silence.
 
 ## Requirements coverage (PostgreSQL 18 SQL commands)
 
@@ -60,7 +60,7 @@ The oracle exposes **2787 builtin functions** and **74 operators** in `pg_catalo
 | Schemas + search_path + pg_catalog / information_schema | VERIFIED | Catalog columns are the commonly-queried subset |
 | Enums, domains, generated columns | VERIFIED | |
 | Triggers (row-level, LANGUAGE sql-expressible) | PARTIALLY VERIFIED | Creation-order firing, `UPDATE OF` ignored, no INSTEAD OF (documented) |
-| CREATE FUNCTION LANGUAGE sql | PARTIALLY VERIFIED | Scalar + set-returning; no polymorphic/variadic edges |
+| CREATE FUNCTION LANGUAGE sql / plpgsql-lite | PARTIALLY VERIFIED | Scalar + set-returning; plpgsql subset: DECLARE, EXCEPTION WHEN others, CASE, FOR-IN-SELECT, RETURN NEXT |
 | Text search (tsvector / tsquery / @@ / ts_rank) | PARTIALLY VERIFIED | `simple`-style config; no ispell/synonym dictionaries |
 | COPY FROM/TO (text, csv) | VERIFIED | Via `copyFrom` API hook / rows out |
 | PREPARE / EXECUTE / DEALLOCATE, SET / SHOW / RESET | VERIFIED | GUC subset |
@@ -68,7 +68,7 @@ The oracle exposes **2787 builtin functions** and **74 operators** in `pg_catalo
 | Collation / ordering | PARTIALLY VERIFIED | `C` semantics pinned; locale/ICU out of scope |
 | Regex (`~`, `~*`, POSIX functions) | PARTIALLY VERIFIED | JS regex flavor mapped to POSIX ERE; documented edges |
 | EXPLAIN | PARTIALLY VERIFIED | Stub plan shapes |
-| MERGE / CALL / cursors / LISTEN / PL/pgSQL | UNSUPPORTED | Fail loud `0A000`, registered |
+| MERGE / CALL / cursors / LISTEN / full PL/pgSQL | UNSUPPORTED | Fail loud `0A000`, registered |
 | Roles / GRANT / VACUUM / ANALYZE / LOCK | NOT APPLICABLE | Parsed no-ops where harmless |
 | Wire protocol / multi-session MVCC / on-disk format | NOT APPLICABLE | |
 

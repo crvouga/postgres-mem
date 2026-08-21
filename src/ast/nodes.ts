@@ -636,7 +636,8 @@ export type AlterTableAction =
   | { kind: "owner_to"; role: string }
   | { kind: "add_identity"; column: string; always: boolean; options: SequenceOptions }
   | { kind: "drop_identity"; column: string; ifExists: boolean }
-  | { kind: "validate_constraint"; name: string };
+  | { kind: "validate_constraint"; name: string }
+  | { kind: "reloptions" };
 
 export interface AlterTableStmt {
   readonly type: "alter_table";

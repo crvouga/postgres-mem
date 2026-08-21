@@ -173,6 +173,7 @@ const TYPE_LITERAL_NAMES = new Set([
   "uuid",
   "json",
   "jsonb",
+  "jsonpath",
   "money",
   "name",
   "oid",
@@ -600,6 +601,24 @@ export class Parser {
 
   private skipToStatementEnd(): void {
     while (this.peek().type !== "eof" && !this.atPunct(";")) this.pos++;
+  }
+
+  /** Consume tokens until the matching `)` after an opening `(` already eaten. */
+  private skipBalancedCloseParen(): void {
+    let depth = 1;
+    while (depth > 0) {
+      const t = this.peek();
+      if (t.type === "eof") throw pgError("syntax", 'unterminated "(" in ALTER TABLE SET', "42601");
+      if (this.eatPunct("(")) {
+        depth++;
+        continue;
+      }
+      if (this.eatPunct(")")) {
+        depth--;
+        continue;
+      }
+      this.pos++;
+    }
   }
 
   // --- WITH-able statements --------------------------------------------------
@@ -2598,6 +2617,10 @@ export class Parser {
     }
     if (this.eatKw("set")) {
       if (this.eatKw("schema")) return { kind: "set_schema", to: this.ident() };
+      if (this.eatPunct("(")) {
+        this.skipBalancedCloseParen();
+        return { kind: "reloptions" };
+      }
       throw unsupported("this ALTER TABLE SET form");
     }
     if (this.eatKw("owner")) {
