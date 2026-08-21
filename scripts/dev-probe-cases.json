@@ -1,0 +1,971 @@
+[
+  {
+    "name": "window row_number",
+    "setup": ["CREATE TABLE w (g text, v int)", "INSERT INTO w VALUES ('a',1),('a',2),('b',3),('b',4),('b',5)"],
+    "sql": "SELECT g, v, row_number() OVER (PARTITION BY g ORDER BY v) FROM w ORDER BY g, v"
+  },
+  {
+    "name": "window rank dense_rank",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(2),(3)"],
+    "sql": "SELECT v, rank() OVER (ORDER BY v), dense_rank() OVER (ORDER BY v) FROM w ORDER BY v"
+  },
+  {
+    "name": "window lag lead",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3)"],
+    "sql": "SELECT v, lag(v) OVER (ORDER BY v), lead(v, 1, -1) OVER (ORDER BY v) FROM w ORDER BY v"
+  },
+  {
+    "name": "window sum frame rows",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3),(4)"],
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM w ORDER BY v"
+  },
+  {
+    "name": "window sum frame range",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(2),(4)"],
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM w ORDER BY v"
+  },
+  {
+    "name": "window range offset",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(3),(4),(7)"],
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v RANGE BETWEEN 2 PRECEDING AND 2 FOLLOWING) FROM w ORDER BY v"
+  },
+  {
+    "name": "window groups frame",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(2),(3)"],
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM w ORDER BY v"
+  },
+  {
+    "name": "window frame exclude",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3)"],
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING EXCLUDE CURRENT ROW) FROM w ORDER BY v"
+  },
+  {
+    "name": "window ntile",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3),(4),(5)"],
+    "sql": "SELECT v, ntile(2) OVER (ORDER BY v) FROM w ORDER BY v"
+  },
+  {
+    "name": "window first last nth",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3)"],
+    "sql": "SELECT v, first_value(v) OVER (ORDER BY v), last_value(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING), nth_value(v, 2) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM w ORDER BY v"
+  },
+  {
+    "name": "window percent_rank cume_dist",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(2),(3)"],
+    "sql": "SELECT v, percent_rank() OVER (ORDER BY v), cume_dist() OVER (ORDER BY v) FROM w ORDER BY v"
+  },
+  {
+    "name": "window named WINDOW clause",
+    "setup": ["CREATE TABLE w (v int)", "INSERT INTO w VALUES (1),(2),(3)"],
+    "sql": "SELECT v, sum(v) OVER win, avg(v) OVER win FROM w WINDOW win AS (ORDER BY v) ORDER BY v"
+  },
+
+  {
+    "name": "recursive cte factorial",
+    "sql": "WITH RECURSIVE f(n, fact) AS (SELECT 1, 1 UNION ALL SELECT n+1, fact*(n+1) FROM f WHERE n < 10) SELECT * FROM f ORDER BY n"
+  },
+  {
+    "name": "recursive cte union dedup",
+    "sql": "WITH RECURSIVE t(n) AS (SELECT 1 UNION SELECT (n % 3) + 1 FROM t) SELECT * FROM t ORDER BY n"
+  },
+  {
+    "name": "cte multiple refs",
+    "setup": ["CREATE TABLE c (v int)", "INSERT INTO c VALUES (1),(2)"],
+    "sql": "WITH x AS (SELECT v FROM c) SELECT a.v, b.v FROM x a CROSS JOIN x b ORDER BY 1, 2"
+  },
+  {
+    "name": "data-modifying cte insert returning",
+    "setup": ["CREATE TABLE dm (id int, v text)"],
+    "sql": "WITH ins AS (INSERT INTO dm VALUES (1, 'a'), (2, 'b') RETURNING id, v) SELECT * FROM ins ORDER BY id"
+  },
+  {
+    "name": "data-modifying cte update chain",
+    "setup": ["CREATE TABLE dm (id int, v int)", "INSERT INTO dm VALUES (1, 10), (2, 20)"],
+    "sql": "WITH upd AS (UPDATE dm SET v = v + 1 RETURNING id, v) SELECT sum(v) FROM upd"
+  },
+  {
+    "name": "data-modifying cte delete",
+    "setup": ["CREATE TABLE dm (id int)", "INSERT INTO dm VALUES (1),(2),(3)"],
+    "sql": "WITH del AS (DELETE FROM dm WHERE id > 1 RETURNING id) SELECT count(*) FROM del"
+  },
+
+  { "name": "array literal and index", "sql": "SELECT (ARRAY[10,20,30])[2] AS v" },
+  { "name": "array slice", "sql": "SELECT (ARRAY[1,2,3,4,5])[2:4] AS v" },
+  { "name": "array 2d", "sql": "SELECT ARRAY[[1,2],[3,4]] AS v" },
+  { "name": "array unnest", "sql": "SELECT unnest(ARRAY[3,1,2]) AS v ORDER BY v" },
+  {
+    "name": "array unnest ordinality",
+    "sql": "SELECT * FROM unnest(ARRAY['a','b']) WITH ORDINALITY AS t(x, n) ORDER BY n"
+  },
+  {
+    "name": "array agg order",
+    "setup": ["CREATE TABLE a (v int)", "INSERT INTO a VALUES (3),(1),(2)"],
+    "sql": "SELECT array_agg(v ORDER BY v DESC) FROM a"
+  },
+  {
+    "name": "array contains operators",
+    "sql": "SELECT ARRAY[1,2,3] @> ARRAY[2] AS a, ARRAY[2] <@ ARRAY[1,2,3] AS b, ARRAY[1,2] && ARRAY[2,3] AS c"
+  },
+  {
+    "name": "array concat operator",
+    "sql": "SELECT ARRAY[1,2] || ARRAY[3] AS a, 0 || ARRAY[1] AS b, ARRAY[1] || 2 AS c"
+  },
+  {
+    "name": "array any all",
+    "sql": "SELECT 2 = ANY(ARRAY[1,2,3]) AS a, 2 = ALL(ARRAY[2,2]) AS b, 5 > ALL(ARRAY[1,2]) AS c"
+  },
+  {
+    "name": "array update element",
+    "setup": ["CREATE TABLE au (a int[])", "INSERT INTO au VALUES (ARRAY[1,2,3])"],
+    "sql": "SELECT a[2] FROM au",
+    "exec": false
+  },
+  { "name": "array text cast roundtrip", "sql": "SELECT '{1,2,NULL,4}'::int[] AS v" },
+  { "name": "array of text with quoting", "sql": "SELECT ARRAY['a b', 'c\"d', 'e,f', NULL] AS v" },
+  {
+    "name": "string_to_array",
+    "sql": "SELECT string_to_array('a,b,,c', ',') AS v, string_to_array('a,b', ',', 'a') AS w"
+  },
+  { "name": "array_to_string", "sql": "SELECT array_to_string(ARRAY[1,NULL,3], ',', 'x') AS v" },
+
+  {
+    "name": "jsonb extraction operators",
+    "sql": "SELECT '{\"a\":{\"b\":[1,2,3]}}'::jsonb -> 'a' AS a, '{\"a\":1}'::jsonb ->> 'a' AS b, '{\"a\":{\"b\":2}}'::jsonb #> '{a,b}' AS c, '{\"a\":{\"b\":2}}'::jsonb #>> '{a,b}' AS d"
+  },
+  {
+    "name": "jsonb containment",
+    "sql": "SELECT '{\"a\":1,\"b\":2}'::jsonb @> '{\"a\":1}' AS a, '{\"a\":1}'::jsonb <@ '{\"a\":1,\"b\":2}' AS b"
+  },
+  {
+    "name": "jsonb exists operators",
+    "sql": "SELECT '{\"a\":1}'::jsonb ? 'a' AS a, '{\"a\":1,\"b\":2}'::jsonb ?| array['x','b'] AS b, '{\"a\":1,\"b\":2}'::jsonb ?& array['a','b'] AS c"
+  },
+  {
+    "name": "jsonb concat delete",
+    "sql": "SELECT '{\"a\":1}'::jsonb || '{\"b\":2}' AS a, '{\"a\":1,\"b\":2}'::jsonb - 'a' AS b, '[1,2,3]'::jsonb - 1 AS c, '{\"a\":{\"b\":1}}'::jsonb #- '{a,b}' AS d"
+  },
+  {
+    "name": "jsonb_set jsonb_insert",
+    "sql": "SELECT jsonb_set('{\"a\":1}', '{b}', '2') AS a, jsonb_insert('[1,3]', '{1}', '2') AS b"
+  },
+  {
+    "name": "jsonb_build funcs",
+    "sql": "SELECT jsonb_build_object('a', 1, 'b', ARRAY[1,2]) AS a, jsonb_build_array(1, 'x', null, true) AS b"
+  },
+  { "name": "jsonb_each srf", "sql": "SELECT * FROM jsonb_each('{\"a\":1,\"b\":\"x\"}') ORDER BY key" },
+  { "name": "jsonb_array_elements", "sql": "SELECT value FROM jsonb_array_elements('[1,\"a\",null]') " },
+  { "name": "jsonb_array_elements_text", "sql": "SELECT value FROM jsonb_array_elements_text('[1,\"a\",null]')" },
+  { "name": "jsonb_object_keys", "sql": "SELECT jsonb_object_keys('{\"b\":1,\"a\":2}') AS k ORDER BY k" },
+  {
+    "name": "jsonb_agg jsonb_object_agg",
+    "setup": ["CREATE TABLE j (k text, v int)", "INSERT INTO j VALUES ('a',1),('b',2)"],
+    "sql": "SELECT jsonb_agg(v ORDER BY v) AS a, jsonb_object_agg(k, v) AS b FROM j"
+  },
+  {
+    "name": "jsonb_typeof jsonb_array_length",
+    "sql": "SELECT jsonb_typeof('{\"a\":1}') AS a, jsonb_typeof('[1]') AS b, jsonb_array_length('[1,2,3]') AS c"
+  },
+  {
+    "name": "to_jsonb row_to_json",
+    "setup": ["CREATE TABLE j (a int, b text)", "INSERT INTO j VALUES (1, 'x')"],
+    "sql": "SELECT to_jsonb(j) AS a, row_to_json(j) AS b FROM j"
+  },
+  {
+    "name": "jsonb_path ops via numeric keys",
+    "sql": "SELECT '[1,2,3]'::jsonb -> 0 AS a, '[1,2,3]'::jsonb ->> 2 AS b, '[1,2,3]'::jsonb -> -1 AS c"
+  },
+  {
+    "name": "json vs jsonb text preservation",
+    "sql": "SELECT '{\"b\":1, \"a\":2}'::json::text AS a, '{\"b\":1, \"a\":2}'::jsonb::text AS b"
+  },
+  {
+    "name": "jsonb_strip_nulls jsonb_pretty",
+    "sql": "SELECT jsonb_strip_nulls('{\"a\":null,\"b\":{\"c\":null,\"d\":1}}') AS a"
+  },
+  {
+    "name": "jsonb numeric fidelity",
+    "sql": "SELECT '1e2'::jsonb::text AS a, '0.10'::jsonb::text AS b, '{\"x\": 1.50}'::jsonb ->> 'x' AS c"
+  },
+
+  {
+    "name": "trigger before insert modifies",
+    "setup": [
+      "CREATE TABLE t (v int, doubled int)",
+      "CREATE FUNCTION double_it() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.doubled := NEW.v * 2; RETURN NEW; END $$",
+      "CREATE TRIGGER trg BEFORE INSERT ON t FOR EACH ROW EXECUTE FUNCTION double_it()",
+      "INSERT INTO t (v) VALUES (5)"
+    ],
+    "sql": "SELECT * FROM t"
+  },
+
+  {
+    "name": "sql function scalar",
+    "setup": ["CREATE FUNCTION add_one(x int) RETURNS int LANGUAGE sql AS $$ SELECT x + 1 $$"],
+    "sql": "SELECT add_one(41) AS v"
+  },
+  {
+    "name": "sql function table",
+    "setup": [
+      "CREATE TABLE ft (v int)",
+      "INSERT INTO ft VALUES (1),(2)",
+      "CREATE FUNCTION get_all() RETURNS SETOF ft LANGUAGE sql AS $$ SELECT * FROM ft $$"
+    ],
+    "sql": "SELECT * FROM get_all() ORDER BY v"
+  },
+  {
+    "name": "sql function default arg",
+    "setup": ["CREATE FUNCTION mul(x int, y int DEFAULT 2) RETURNS int LANGUAGE sql AS $$ SELECT x * y $$"],
+    "sql": "SELECT mul(5) AS a, mul(5, 3) AS b"
+  },
+
+  {
+    "name": "prepare execute",
+    "setup": [
+      "CREATE TABLE p (v int)",
+      "INSERT INTO p VALUES (1),(2),(3)",
+      "PREPARE getv (int) AS SELECT v FROM p WHERE v > $1 ORDER BY v"
+    ],
+    "sql": "EXECUTE getv(1)"
+  },
+
+  { "name": "set show timezone", "setup": ["SET TIME ZONE 'America/New_York'"], "sql": "SHOW timezone" },
+  { "name": "set local in txn", "setup": ["CREATE TABLE g (v int)"], "sql": "SHOW datestyle" },
+  { "name": "current_setting", "sql": "SELECT current_setting('server_version') AS v" },
+
+  {
+    "name": "tsvector match",
+    "sql": "SELECT to_tsvector('english', 'The quick brown foxes jumped') @@ to_tsquery('english', 'fox & jump') AS v"
+  },
+  {
+    "name": "to_tsvector output",
+    "sql": "SELECT to_tsvector('english', 'The quick brown foxes jumped over lazy dogs')::text AS v"
+  },
+  { "name": "tsquery output", "sql": "SELECT to_tsquery('english', 'foxes & (jumping | running)')::text AS v" },
+  {
+    "name": "plainto phraseto tsquery",
+    "sql": "SELECT plainto_tsquery('english', 'quick foxes')::text AS a, phraseto_tsquery('english', 'quick foxes')::text AS b"
+  },
+  {
+    "name": "ts_rank",
+    "sql": "SELECT round(ts_rank(to_tsvector('english', 'a fast fox runs fast'), to_tsquery('english', 'fast'))::numeric, 6) AS v"
+  },
+  {
+    "name": "setweight strip",
+    "sql": "SELECT setweight(to_tsvector('simple', 'cat dog'), 'A')::text AS a, strip(setweight(to_tsvector('simple', 'cat'), 'B'))::text AS b"
+  },
+
+  {
+    "name": "on conflict do nothing",
+    "setup": [
+      "CREATE TABLE oc (id int PRIMARY KEY, v text)",
+      "INSERT INTO oc VALUES (1, 'a')",
+      "INSERT INTO oc VALUES (1, 'b') ON CONFLICT (id) DO NOTHING"
+    ],
+    "sql": "SELECT * FROM oc"
+  },
+  {
+    "name": "on conflict do update excluded",
+    "setup": [
+      "CREATE TABLE oc (id int PRIMARY KEY, v text)",
+      "INSERT INTO oc VALUES (1, 'a')",
+      "INSERT INTO oc VALUES (1, 'b') ON CONFLICT (id) DO UPDATE SET v = excluded.v || '!' "
+    ],
+    "sql": "SELECT * FROM oc"
+  },
+  {
+    "name": "on conflict where clause",
+    "setup": [
+      "CREATE TABLE oc (id int PRIMARY KEY, v int)",
+      "INSERT INTO oc VALUES (1, 10)",
+      "INSERT INTO oc VALUES (1, 5) ON CONFLICT (id) DO UPDATE SET v = excluded.v WHERE oc.v < excluded.v"
+    ],
+    "sql": "SELECT * FROM oc"
+  },
+
+  {
+    "name": "lateral join",
+    "setup": ["CREATE TABLE l (id int, arr int[])", "INSERT INTO l VALUES (1, ARRAY[10,20]), (2, ARRAY[30])"],
+    "sql": "SELECT l.id, x.v FROM l, LATERAL unnest(l.arr) AS x(v) ORDER BY id, v"
+  },
+  {
+    "name": "lateral subquery",
+    "setup": ["CREATE TABLE l (id int)", "INSERT INTO l VALUES (1),(2)"],
+    "sql": "SELECT l.id, s.double FROM l CROSS JOIN LATERAL (SELECT l.id * 2 AS double) s ORDER BY id"
+  },
+
+  {
+    "name": "grouping sets",
+    "setup": ["CREATE TABLE gs (a text, b text, v int)", "INSERT INTO gs VALUES ('x','p',1),('x','q',2),('y','p',3)"],
+    "sql": "SELECT a, b, sum(v) FROM gs GROUP BY GROUPING SETS ((a), (b), ()) ORDER BY a NULLS LAST, b NULLS LAST"
+  },
+  {
+    "name": "rollup",
+    "setup": ["CREATE TABLE gs (a text, b text, v int)", "INSERT INTO gs VALUES ('x','p',1),('x','q',2)"],
+    "sql": "SELECT a, b, sum(v), grouping(a, b) FROM gs GROUP BY ROLLUP (a, b) ORDER BY a NULLS LAST, b NULLS LAST"
+  },
+  {
+    "name": "cube",
+    "setup": ["CREATE TABLE gs (a text, v int)", "INSERT INTO gs VALUES ('x',1),('y',2)"],
+    "sql": "SELECT a, sum(v) FROM gs GROUP BY CUBE (a) ORDER BY a NULLS LAST"
+  },
+
+  { "name": "except intersect", "sql": "SELECT * FROM (VALUES (1),(2),(3)) a(v) EXCEPT SELECT 2 ORDER BY v" },
+  { "name": "union all vs union", "sql": "SELECT 1 UNION ALL SELECT 1 UNION SELECT 2 ORDER BY 1" },
+  {
+    "name": "intersect all",
+    "sql": "SELECT * FROM (VALUES (1),(1),(2)) a(v) INTERSECT ALL SELECT * FROM (VALUES (1),(1),(3)) b(v) ORDER BY v"
+  },
+
+  {
+    "name": "sequence nextval currval",
+    "setup": ["CREATE SEQUENCE sq START 5 INCREMENT 3"],
+    "sql": "SELECT nextval('sq') AS a, nextval('sq') AS b, currval('sq') AS c"
+  },
+  {
+    "name": "sequence setval",
+    "setup": ["CREATE SEQUENCE sq"],
+    "sql": "SELECT setval('sq', 100) AS a, nextval('sq') AS b"
+  },
+  {
+    "name": "serial identity",
+    "setup": ["CREATE TABLE si (id serial, v text)", "INSERT INTO si (v) VALUES ('a'), ('b')"],
+    "sql": "SELECT id, v FROM si ORDER BY id"
+  },
+  {
+    "name": "identity column",
+    "setup": [
+      "CREATE TABLE si (id int GENERATED ALWAYS AS IDENTITY, v text)",
+      "INSERT INTO si (v) VALUES ('a'), ('b')"
+    ],
+    "sql": "SELECT id, v FROM si ORDER BY id"
+  },
+
+  {
+    "name": "enum ordering",
+    "setup": [
+      "CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy')",
+      "CREATE TABLE em (m mood)",
+      "INSERT INTO em VALUES ('happy'), ('sad'), ('ok')"
+    ],
+    "sql": "SELECT m FROM em ORDER BY m"
+  },
+  {
+    "name": "enum comparison",
+    "setup": ["CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy')"],
+    "sql": "SELECT 'sad'::mood < 'happy'::mood AS v"
+  },
+  {
+    "name": "domain check",
+    "setup": [
+      "CREATE DOMAIN posint AS int CHECK (VALUE > 0)",
+      "CREATE TABLE dm (v posint)",
+      "INSERT INTO dm VALUES (5)"
+    ],
+    "sql": "SELECT v FROM dm"
+  },
+
+  {
+    "name": "interval arithmetic",
+    "sql": "SELECT '2024-01-31'::date + interval '1 month' AS a, interval '1 day' * 2.5 AS b, interval '3 hours' + interval '90 minutes' AS c"
+  },
+  {
+    "name": "interval output styles",
+    "sql": "SELECT interval '1 year 2 months 3 days 04:05:06' AS a, interval '-1 day 12:00:00' AS b"
+  },
+  {
+    "name": "date arithmetic",
+    "sql": "SELECT '2024-03-01'::date - '2024-02-01'::date AS a, '2024-01-01'::date + 45 AS b"
+  },
+  {
+    "name": "extract fields",
+    "sql": "SELECT extract(year FROM date '2024-02-29') AS y, extract(dow FROM date '2024-02-26') AS dow, extract(epoch FROM timestamp '2000-01-02 00:00:00') AS ep"
+  },
+  { "name": "date_trunc week", "sql": "SELECT date_trunc('week', timestamp '2024-02-29 13:45:00') AS v" },
+  { "name": "age function", "sql": "SELECT age(timestamp '2024-03-15', timestamp '2022-01-20') AS v" },
+  {
+    "name": "to_char timestamp",
+    "sql": "SELECT to_char(timestamp '2024-02-29 13:05:09', 'YYYY-MM-DD HH24:MI:SS Day Mon') AS v"
+  },
+  { "name": "make_interval overlaps", "sql": "SELECT make_interval(years => 1, days => 10) AS v" },
+  {
+    "name": "timestamptz zone conversion",
+    "setup": ["SET TIME ZONE 'America/New_York'"],
+    "sql": "SELECT timestamp with time zone '2024-06-15 12:00:00+00' AS v"
+  },
+  {
+    "name": "at time zone",
+    "sql": "SELECT timestamp '2024-01-15 12:00:00' AT TIME ZONE 'America/New_York' AS a, timestamptz '2024-01-15 12:00:00+00' AT TIME ZONE 'America/New_York' AS b"
+  },
+
+  {
+    "name": "numeric precision ops",
+    "sql": "SELECT 1.1 + 2.2 AS a, 0.1 * 0.2 AS b, 10::numeric / 4 AS c, 2::numeric ^ 100 AS d"
+  },
+  {
+    "name": "numeric rounding",
+    "sql": "SELECT round(2.5) AS a, round(-2.5) AS b, round(2.567, 2) AS c, trunc(2.567, 2) AS d"
+  },
+  {
+    "name": "float special values",
+    "sql": "SELECT 'Infinity'::float8 AS a, '-Infinity'::float8 AS b, 'NaN'::float8 AS c, 1e300 * 1e-300 AS d"
+  },
+  { "name": "int overflow error parity", "sql": "SELECT 2147483647::int + 1" },
+  { "name": "bigint arithmetic", "sql": "SELECT 9223372036854775806::int8 + 1 AS v" },
+  { "name": "numeric factorial large", "sql": "SELECT factorial(30) AS v" },
+
+  {
+    "name": "copy from stdin equivalent insert",
+    "setup": ["CREATE TABLE cp (a int, b text)"],
+    "sql": "SELECT count(*) FROM cp"
+  },
+
+  { "name": "returning clause expr", "setup": ["CREATE TABLE r (id serial, v int)"], "sql": "SELECT 1", "exec": false },
+  {
+    "name": "update from",
+    "setup": [
+      "CREATE TABLE u1 (id int, v int)",
+      "CREATE TABLE u2 (id int, w int)",
+      "INSERT INTO u1 VALUES (1, 0), (2, 0)",
+      "INSERT INTO u2 VALUES (1, 100), (2, 200)",
+      "UPDATE u1 SET v = u2.w FROM u2 WHERE u1.id = u2.id"
+    ],
+    "sql": "SELECT * FROM u1 ORDER BY id"
+  },
+  {
+    "name": "delete using",
+    "setup": [
+      "CREATE TABLE d1 (id int)",
+      "CREATE TABLE d2 (id int)",
+      "INSERT INTO d1 VALUES (1),(2),(3)",
+      "INSERT INTO d2 VALUES (2)",
+      "DELETE FROM d1 USING d2 WHERE d1.id = d2.id"
+    ],
+    "sql": "SELECT * FROM d1 ORDER BY id"
+  },
+
+  {
+    "name": "distinct on multiple",
+    "setup": ["CREATE TABLE dd (g text, v int)", "INSERT INTO dd VALUES ('a', 3), ('a', 1), ('b', 2), ('b', 5)"],
+    "sql": "SELECT DISTINCT ON (g) g, v FROM dd ORDER BY g, v DESC"
+  },
+  {
+    "name": "fetch first with ties",
+    "setup": ["CREATE TABLE ft (v int)", "INSERT INTO ft VALUES (1),(2),(2),(3)"],
+    "sql": "SELECT v FROM ft ORDER BY v FETCH FIRST 2 ROWS WITH TIES"
+  },
+  { "name": "row value comparison", "sql": "SELECT (1, 2) < (1, 3) AS a, (1, 2) = (1, 2) AS b, ROW(1, 'x') AS c" },
+  { "name": "is distinct from", "sql": "SELECT NULL IS DISTINCT FROM 1 AS a, NULL IS NOT DISTINCT FROM NULL AS b" },
+  {
+    "name": "case insensitive ilike",
+    "sql": "SELECT 'HeLLo' ILIKE 'hello' AS a, 'abc' LIKE 'a%' AS b, 'abc' SIMILAR TO 'a(b|x)c' AS c"
+  },
+  {
+    "name": "posix regex operators",
+    "sql": "SELECT 'hello' ~ 'ell' AS a, 'HELLO' ~* 'ell' AS b, 'x123' !~ '^[0-9]' AS c"
+  },
+  {
+    "name": "generated column stored",
+    "setup": ["CREATE TABLE gc (a int, b int GENERATED ALWAYS AS (a * 2) STORED)", "INSERT INTO gc (a) VALUES (5)"],
+    "sql": "SELECT * FROM gc"
+  },
+  {
+    "name": "check constraint expr",
+    "setup": ["CREATE TABLE cc (v int CHECK (v BETWEEN 0 AND 100))", "INSERT INTO cc VALUES (50)"],
+    "sql": "SELECT * FROM cc"
+  },
+  {
+    "name": "fk cascade delete",
+    "setup": [
+      "CREATE TABLE parent (id int PRIMARY KEY)",
+      "CREATE TABLE child (id int, pid int REFERENCES parent(id) ON DELETE CASCADE)",
+      "INSERT INTO parent VALUES (1),(2)",
+      "INSERT INTO child VALUES (10, 1), (20, 2)",
+      "DELETE FROM parent WHERE id = 1"
+    ],
+    "sql": "SELECT * FROM child ORDER BY id"
+  },
+  {
+    "name": "savepoint rollback",
+    "setup": [
+      "CREATE TABLE sv (v int)",
+      "BEGIN",
+      "INSERT INTO sv VALUES (1)",
+      "SAVEPOINT s1",
+      "INSERT INTO sv VALUES (2)",
+      "ROLLBACK TO s1",
+      "COMMIT"
+    ],
+    "sql": "SELECT * FROM sv ORDER BY v"
+  },
+  {
+    "name": "exists correlated",
+    "setup": [
+      "CREATE TABLE e1 (id int)",
+      "CREATE TABLE e2 (id int)",
+      "INSERT INTO e1 VALUES (1),(2)",
+      "INSERT INTO e2 VALUES (2)"
+    ],
+    "sql": "SELECT id FROM e1 WHERE EXISTS (SELECT 1 FROM e2 WHERE e2.id = e1.id)"
+  },
+  {
+    "name": "scalar subquery in select",
+    "setup": ["CREATE TABLE s1 (v int)", "INSERT INTO s1 VALUES (10)"],
+    "sql": "SELECT (SELECT max(v) FROM s1) + 1 AS v"
+  },
+  {
+    "name": "in subquery",
+    "setup": ["CREATE TABLE s1 (v int)", "INSERT INTO s1 VALUES (1),(2)"],
+    "sql": "SELECT 2 IN (SELECT v FROM s1) AS a, 5 NOT IN (SELECT v FROM s1) AS b"
+  },
+  {
+    "name": "coalesce nullif greatest least",
+    "sql": "SELECT coalesce(NULL, 2) AS a, nullif(3, 3) AS b, greatest(1, 5, 3) AS c, least(1, 5, NULL) AS d"
+  },
+  { "name": "generate_series step", "sql": "SELECT generate_series(10, 1, -3) AS v" },
+  {
+    "name": "generate_series timestamp",
+    "sql": "SELECT generate_series(timestamp '2024-01-01', timestamp '2024-01-04', interval '1 day') AS v"
+  },
+  {
+    "name": "string functions basics",
+    "sql": "SELECT upper('abc') AS a, substring('hello' from 2 for 3) AS b, position('ll' in 'hello') AS c, overlay('hello' placing 'XX' from 2 for 3) AS d, trim(both 'x' from 'xxhixx') AS e"
+  },
+  { "name": "format function", "sql": "SELECT format('%s-%I-%L', 'a b', 'a b', 'a b') AS v" },
+  {
+    "name": "regexp_replace groups",
+    "sql": "SELECT regexp_replace('hello world', '(w)(o)', '\\2\\1') AS v, regexp_replace('aaa', 'a', 'b', 'g') AS w"
+  },
+  {
+    "name": "bytea operations",
+    "sql": "SELECT '\\xdeadbeef'::bytea AS a, length('\\xdead'::bytea) AS b, encode('abc'::bytea, 'base64') AS c, decode('YWJj', 'base64') AS d"
+  },
+  { "name": "uuid deterministic check", "sql": "SELECT '550e8400-e29b-41d4-a716-446655440000'::uuid AS v" },
+  { "name": "money type", "sql": "SELECT '12.34'::money AS v" },
+  { "name": "bit strings", "sql": "SELECT B'1010' AS a, B'1010' | B'0101' AS b" },
+  {
+    "name": "aggregate filter",
+    "setup": ["CREATE TABLE af (v int)", "INSERT INTO af VALUES (1),(2),(3),(4)"],
+    "sql": "SELECT count(*) FILTER (WHERE v > 2) AS a, sum(v) FILTER (WHERE v % 2 = 0) AS b FROM af"
+  },
+  {
+    "name": "string_agg distinct order",
+    "setup": ["CREATE TABLE sa (v text)", "INSERT INTO sa VALUES ('b'),('a'),('b')"],
+    "sql": "SELECT string_agg(DISTINCT v, ',' ORDER BY v) FROM sa"
+  },
+  {
+    "name": "percentile_cont",
+    "setup": ["CREATE TABLE pc (v int)", "INSERT INTO pc VALUES (1),(2),(3),(4)"],
+    "sql": "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY v) FROM pc"
+  },
+  {
+    "name": "mode within group",
+    "setup": ["CREATE TABLE md (v int)", "INSERT INTO md VALUES (1),(2),(2),(3)"],
+    "sql": "SELECT mode() WITHIN GROUP (ORDER BY v) FROM md"
+  },
+  {
+    "name": "stddev variance",
+    "setup": ["CREATE TABLE sd (v int)", "INSERT INTO sd VALUES (1),(2),(3),(4)"],
+    "sql": "SELECT round(stddev(v), 10) AS a, round(variance(v), 10) AS b, round(stddev_pop(v), 10) AS c FROM sd"
+  },
+  {
+    "name": "bool_and bool_or",
+    "setup": ["CREATE TABLE ba (v bool)", "INSERT INTO ba VALUES (true),(false)"],
+    "sql": "SELECT bool_and(v) AS a, bool_or(v) AS b, every(v) AS c FROM ba"
+  },
+  {
+    "name": "tablesample none - alias test",
+    "setup": ["CREATE TABLE al (v int)", "INSERT INTO al VALUES (1)"],
+    "sql": "SELECT t.v AS renamed FROM al AS t(v)"
+  },
+  { "name": "values ordering", "sql": "SELECT * FROM (VALUES (3, 'c'), (1, 'a'), (2, 'b')) AS v(n, s) ORDER BY n" },
+  {
+    "name": "nulls ordering",
+    "setup": ["CREATE TABLE no1 (v int)", "INSERT INTO no1 VALUES (2),(NULL),(1)"],
+    "sql": "SELECT v FROM no1 ORDER BY v ASC NULLS FIRST"
+  },
+  { "name": "limit offset", "sql": "SELECT g FROM generate_series(1, 10) g ORDER BY g LIMIT 3 OFFSET 4" },
+  { "name": "cast text to int error", "sql": "SELECT 'abc'::int" },
+  { "name": "cast truncation varchar", "sql": "SELECT 'hello'::varchar(3) AS v, 'ab'::char(4) || 'x' AS w" },
+  {
+    "name": "implicit cast in comparison",
+    "sql": "SELECT 1 = 1.0 AS a, '5'::text = 5::text AS b, 1::int8 = 1::int2 AS c"
+  },
+
+  {
+    "name": "trigger after insert audit",
+    "setup": [
+      "CREATE TABLE main1 (v int)",
+      "CREATE TABLE audit1 (v int)",
+      "CREATE FUNCTION audit_it() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+      "CREATE TRIGGER trg AFTER INSERT ON main1 FOR EACH ROW EXECUTE FUNCTION audit_it()",
+      "INSERT INTO main1 VALUES (7)"
+    ],
+    "sql": "SELECT * FROM main1"
+  },
+  {
+    "name": "trigger before update old new",
+    "setup": [
+      "CREATE TABLE tu (v int, prev int)",
+      "CREATE FUNCTION keep_prev() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.prev := OLD.v; RETURN NEW; END $$",
+      "CREATE TRIGGER trg BEFORE UPDATE ON tu FOR EACH ROW EXECUTE FUNCTION keep_prev()",
+      "INSERT INTO tu (v) VALUES (1)",
+      "UPDATE tu SET v = 5"
+    ],
+    "sql": "SELECT * FROM tu"
+  },
+  {
+    "name": "trigger return null skips row",
+    "setup": [
+      "CREATE TABLE ts1 (v int)",
+      "CREATE FUNCTION block_neg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.v < 0 THEN RETURN NULL; END IF; RETURN NEW; END $$",
+      "CREATE TRIGGER trg BEFORE INSERT ON ts1 FOR EACH ROW EXECUTE FUNCTION block_neg()",
+      "INSERT INTO ts1 VALUES (-1), (2), (-3), (4)"
+    ],
+    "sql": "SELECT * FROM ts1 ORDER BY v"
+  },
+  {
+    "name": "trigger when clause",
+    "setup": [
+      "CREATE TABLE tw (v int, flag text)",
+      "CREATE FUNCTION mark_big() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.flag := 'big'; RETURN NEW; END $$",
+      "CREATE TRIGGER trg BEFORE INSERT ON tw FOR EACH ROW WHEN (NEW.v > 10) EXECUTE FUNCTION mark_big()",
+      "INSERT INTO tw (v) VALUES (5), (20)"
+    ],
+    "sql": "SELECT * FROM tw ORDER BY v"
+  },
+  {
+    "name": "trigger raise exception",
+    "setup": [
+      "CREATE TABLE tr2 (v int)",
+      "CREATE FUNCTION no_way() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'nope'; END $$",
+      "CREATE TRIGGER trg BEFORE INSERT ON tr2 FOR EACH ROW EXECUTE FUNCTION no_way()"
+    ],
+    "sql": "INSERT INTO tr2 VALUES (1)",
+    "exec": true
+  },
+  {
+    "name": "sql function setof table",
+    "setup": [
+      "CREATE TABLE ft2 (a int, b text)",
+      "INSERT INTO ft2 VALUES (1, 'x'), (2, 'y')",
+      "CREATE FUNCTION get_all2() RETURNS SETOF ft2 LANGUAGE sql AS $$ SELECT * FROM ft2 $$"
+    ],
+    "sql": "SELECT * FROM get_all2() ORDER BY a"
+  },
+  {
+    "name": "sql function returns table",
+    "setup": [
+      "CREATE FUNCTION pairs() RETURNS TABLE (n int, sq int) LANGUAGE sql AS $$ SELECT g, g*g FROM generate_series(1,3) g $$"
+    ],
+    "sql": "SELECT * FROM pairs() ORDER BY n"
+  },
+  {
+    "name": "view basic",
+    "setup": [
+      "CREATE TABLE vb (v int)",
+      "INSERT INTO vb VALUES (1),(2),(3)",
+      "CREATE VIEW vv AS SELECT v * 10 AS x FROM vb WHERE v > 1"
+    ],
+    "sql": "SELECT * FROM vv ORDER BY x"
+  },
+  {
+    "name": "materialized view",
+    "setup": [
+      "CREATE TABLE mvb (v int)",
+      "INSERT INTO mvb VALUES (1),(2)",
+      "CREATE MATERIALIZED VIEW mv1 AS SELECT sum(v) AS s FROM mvb",
+      "INSERT INTO mvb VALUES (100)",
+      "REFRESH MATERIALIZED VIEW mv1"
+    ],
+    "sql": "SELECT * FROM mv1"
+  },
+  {
+    "name": "create table as",
+    "setup": ["CREATE TABLE cta AS SELECT g AS n, g * 2 AS d FROM generate_series(1, 3) g"],
+    "sql": "SELECT * FROM cta ORDER BY n"
+  },
+  {
+    "name": "alter table add drop column",
+    "setup": [
+      "CREATE TABLE atc (a int)",
+      "INSERT INTO atc VALUES (1)",
+      "ALTER TABLE atc ADD COLUMN b text DEFAULT 'd'",
+      "ALTER TABLE atc ADD COLUMN c int",
+      "ALTER TABLE atc DROP COLUMN c"
+    ],
+    "sql": "SELECT * FROM atc"
+  },
+  {
+    "name": "alter table rename",
+    "setup": [
+      "CREATE TABLE arn (a int)",
+      "ALTER TABLE arn RENAME COLUMN a TO b",
+      "ALTER TABLE arn RENAME TO arn2",
+      "INSERT INTO arn2 (b) VALUES (9)"
+    ],
+    "sql": "SELECT b FROM arn2"
+  },
+  {
+    "name": "prepare execute typed params",
+    "setup": ["PREPARE p2 (int, text) AS SELECT $1 + 1 AS n, upper($2) AS s"],
+    "sql": "EXECUTE p2 (41, 'ok')"
+  },
+  {
+    "name": "set local in transaction",
+    "setup": ["BEGIN", "SET LOCAL timezone = 'America/New_York'", "COMMIT"],
+    "sql": "SHOW timezone"
+  },
+  {
+    "name": "set_config current_setting",
+    "setup": ["SELECT set_config('search_path', 'public', false)"],
+    "sql": "SELECT current_setting('search_path') AS v"
+  },
+  {
+    "name": "grouping function",
+    "setup": ["CREATE TABLE gf (a text, b text, v int)", "INSERT INTO gf VALUES ('x','p',1),('x','q',2),('y','p',3)"],
+    "sql": "SELECT a, b, sum(v) AS s, grouping(a) AS ga, grouping(b) AS gb FROM gf GROUP BY ROLLUP (a, b) ORDER BY a NULLS LAST, b NULLS LAST"
+  },
+  {
+    "name": "window over aggregate",
+    "setup": ["CREATE TABLE wa (g text, v int)", "INSERT INTO wa VALUES ('a',1),('a',2),('b',3)"],
+    "sql": "SELECT g, sum(v) AS s, rank() OVER (ORDER BY sum(v) DESC) AS r FROM wa GROUP BY g ORDER BY g"
+  },
+  {
+    "name": "distinct aggregate",
+    "setup": ["CREATE TABLE da (v int)", "INSERT INTO da VALUES (1),(1),(2),(3),(3)"],
+    "sql": "SELECT count(DISTINCT v) AS c, sum(DISTINCT v) AS s FROM da"
+  },
+  {
+    "name": "jsonb subscript read",
+    "sql": "SELECT ('{\"a\": {\"b\": [10, 20]}}'::jsonb)['a']['b'][1] AS v"
+  },
+  {
+    "name": "jsonb path arrows chained",
+    "sql": "SELECT '{\"a\":[{\"b\":1},{\"b\":2}]}'::jsonb -> 'a' -> 1 ->> 'b' AS v"
+  },
+  {
+    "name": "json_populate_record style extract",
+    "sql": "SELECT ('{\"x\": 1, \"y\": \"two\"}'::jsonb) #>> '{y}' AS v, ('[1,[2,3]]'::jsonb) #> '{1,0}' AS w"
+  },
+  {
+    "name": "array_position and friends",
+    "sql": "SELECT array_position(ARRAY['a','b','c'], 'b') AS p, array_positions(ARRAY[1,2,1], 1) AS ps, array_remove(ARRAY[1,2,1], 1) AS rm, array_replace(ARRAY[1,2,3], 2, 9) AS rp, cardinality(ARRAY[[1,2],[3,4]]) AS c"
+  },
+  {
+    "name": "array_fill array_cat",
+    "sql": "SELECT array_fill(7, ARRAY[3]) AS f, array_cat(ARRAY[1,2], ARRAY[3]) AS c, array_ndims(ARRAY[[1],[2]]) AS d, array_dims(ARRAY[[1,2],[3,4]]) AS dims"
+  },
+  {
+    "name": "generate_subscripts",
+    "sql": "SELECT generate_subscripts(ARRAY['a','b','c'], 1) AS i"
+  },
+  {
+    "name": "string_to_table split_part",
+    "sql": "SELECT string_to_table('a,b,c', ',') AS v, split_part('a|b|c', '|', 2) AS p"
+  },
+  {
+    "name": "text functions wave2",
+    "sql": "SELECT lpad('7', 3, '0') AS a, translate('abc', 'ac', 'xy') AS b, overlay('hello' placing 'XX' from 2 for 3) AS c, position('ll' in 'hello') AS d, substring('hello' from 2 for 3) AS e"
+  },
+  {
+    "name": "substring regex forms",
+    "sql": "SELECT substring('foobar' from 'o.b') AS a, substring('foobar' similar '%#\"o_b#\"%' escape '#') AS b"
+  },
+  {
+    "name": "quote funcs",
+    "sql": "SELECT quote_ident('weird name') AS a, quote_literal('it''s') AS b, quote_nullable(NULL) AS c"
+  },
+  {
+    "name": "encode decode md5",
+    "sql": "SELECT encode('\\x68690021'::bytea, 'base64') AS a, decode('aGk=', 'base64') AS b, md5('abc') AS c"
+  },
+  {
+    "name": "num_nonnulls num_nulls",
+    "sql": "SELECT num_nonnulls(1, NULL, 'x') AS a, num_nulls(1, NULL, NULL) AS b"
+  },
+  {
+    "name": "width_bucket",
+    "sql": "SELECT width_bucket(5.35, 0.024, 10.06, 5) AS a, width_bucket(9, 1, 10, 3) AS b"
+  },
+  {
+    "name": "between symmetric",
+    "sql": "SELECT 5 BETWEEN SYMMETRIC 10 AND 1 AS a, 5 NOT BETWEEN 6 AND 10 AS b"
+  },
+  {
+    "name": "row is null",
+    "sql": "SELECT ROW(NULL, NULL) IS NULL AS a, ROW(1, NULL) IS NULL AS b, ROW(1, NULL) IS NOT NULL AS c"
+  },
+  {
+    "name": "pg_typeof",
+    "sql": "SELECT pg_typeof(1) AS a, pg_typeof(1.5) AS b, pg_typeof('x'::text) AS c, pg_typeof(now()) AS d"
+  },
+  {
+    "name": "justify interval",
+    "sql": "SELECT justify_hours(interval '50 hours') AS a, justify_days(interval '40 days') AS b, justify_interval(interval '1 mon -1 hour') AS c"
+  },
+  {
+    "name": "date_part on interval",
+    "sql": "SELECT date_part('hour', interval '5 days 03:30:00') AS a, extract(epoch FROM interval '1 hour') AS b"
+  },
+  {
+    "name": "overlaps operator",
+    "sql": "SELECT (date '2024-01-01', date '2024-02-01') OVERLAPS (date '2024-01-15', date '2024-03-01') AS a"
+  },
+  {
+    "name": "to_date to_timestamp to_number",
+    "sql": "SELECT to_date('2024-02-29', 'YYYY-MM-DD') AS a, to_number('1,234.56', '9G999D99') AS b"
+  },
+  {
+    "name": "time arithmetic",
+    "sql": "SELECT time '11:30' + interval '2 hours 45 minutes' AS a, time '01:00' - time '23:00' AS b"
+  },
+  {
+    "name": "least greatest type resolution",
+    "sql": "SELECT greatest(1, 2.5, 3) AS a, least('b', 'a', 'c') AS b, greatest(NULL, 5) AS c"
+  },
+  {
+    "name": "union type unification",
+    "sql": "SELECT v FROM (SELECT 1 AS v UNION ALL SELECT 2.5) s ORDER BY v"
+  },
+  {
+    "name": "recursive cte tree walk",
+    "setup": [
+      "CREATE TABLE tree (id int, parent int)",
+      "INSERT INTO tree VALUES (1, NULL), (2, 1), (3, 1), (4, 2), (5, 4)"
+    ],
+    "sql": "WITH RECURSIVE sub AS (SELECT id, 0 AS depth FROM tree WHERE id = 2 UNION ALL SELECT t.id, s.depth + 1 FROM tree t JOIN sub s ON t.parent = s.id) SELECT * FROM sub ORDER BY id"
+  },
+  {
+    "name": "recursive cte string path",
+    "sql": "WITH RECURSIVE r AS (SELECT 1 AS n, '1' AS path UNION ALL SELECT n + 1, path || '->' || (n + 1) FROM r WHERE n < 4) SELECT * FROM r ORDER BY n"
+  },
+  {
+    "name": "nested window frame groups exclude",
+    "sql": "SELECT v, sum(v) OVER (ORDER BY v GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING EXCLUDE GROUP) AS s FROM (VALUES (1),(1),(2),(3),(3)) t(v)"
+  },
+  {
+    "name": "filter over window",
+    "sql": "SELECT v, count(*) FILTER (WHERE v % 2 = 0) OVER (ORDER BY v) AS c FROM generate_series(1, 5) v"
+  },
+  {
+    "name": "insert select returning expr",
+    "setup": ["CREATE TABLE isr (v int)"],
+    "sql": "INSERT INTO isr SELECT g FROM generate_series(1,3) g RETURNING v * 100 AS scaled"
+  },
+  {
+    "name": "on conflict do update with where",
+    "setup": ["CREATE TABLE ocu (k int PRIMARY KEY, v int)", "INSERT INTO ocu VALUES (1, 10)"],
+    "sql": "INSERT INTO ocu VALUES (1, 99) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v WHERE ocu.v < 50 RETURNING *"
+  },
+  {
+    "name": "update returning old values expression",
+    "setup": ["CREATE TABLE urv (v int)", "INSERT INTO urv VALUES (5)"],
+    "sql": "UPDATE urv SET v = v * 2 RETURNING v"
+  },
+  {
+    "name": "tsvector concat and length",
+    "sql": "SELECT to_tsvector('simple', 'red car') || to_tsvector('simple', 'blue bus') AS v, length(to_tsvector('simple', 'a b a')) AS l"
+  },
+  {
+    "name": "tsquery ops",
+    "sql": "SELECT 'a & b'::tsquery || 'c'::tsquery AS orq, 'a'::tsquery && 'b'::tsquery AS andq, !!'a'::tsquery AS notq"
+  },
+  {
+    "name": "ts_headline basic",
+    "sql": "SELECT ts_headline('english', 'The quick brown fox jumps', to_tsquery('english', 'fox')) AS v"
+  },
+  {
+    "name": "ts_rank weights and norm",
+    "setup": [
+      "CREATE TABLE tsr (doc tsvector)",
+      "INSERT INTO tsr VALUES (setweight(to_tsvector('english', 'cat dog'), 'A') || to_tsvector('english', 'dog bird'))"
+    ],
+    "sql": "SELECT round(ts_rank(doc, to_tsquery('english', 'dog & cat'))::numeric, 6) AS a, round(ts_rank(ARRAY[0.2,0.3,0.5,0.9]::float4[], doc, to_tsquery('english', 'dog'))::numeric, 6) AS b, round(ts_rank(doc, to_tsquery('english', 'dog'), 2)::numeric, 6) AS c FROM tsr"
+  },
+  {
+    "name": "enum in table order and where",
+    "setup": [
+      "CREATE TYPE size2 AS ENUM ('small', 'medium', 'large')",
+      "CREATE TABLE shirts (s size2)",
+      "INSERT INTO shirts VALUES ('large'), ('small'), ('medium')"
+    ],
+    "sql": "SELECT s FROM shirts WHERE s > 'small' ORDER BY s"
+  },
+  {
+    "name": "domain in table with constraint error",
+    "setup": ["CREATE DOMAIN posint2 AS int CHECK (VALUE > 0)", "CREATE TABLE dp (v posint2)"],
+    "sql": "INSERT INTO dp VALUES (-5)",
+    "exec": true
+  },
+  {
+    "name": "search_path schema resolution",
+    "setup": [
+      "CREATE SCHEMA app",
+      "CREATE TABLE app.items (v int)",
+      "INSERT INTO app.items VALUES (42)",
+      "SET search_path TO app, public"
+    ],
+    "sql": "SELECT * FROM items"
+  },
+  {
+    "name": "information_schema columns",
+    "setup": ["CREATE TABLE isc (a int NOT NULL, b text)"],
+    "sql": "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'isc' ORDER BY ordinal_position"
+  },
+  {
+    "name": "pg_catalog attributes",
+    "setup": ["CREATE TABLE pca (x int, y text)"],
+    "sql": "SELECT attname FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid WHERE c.relname = 'pca' AND attnum > 0 ORDER BY attnum"
+  },
+  {
+    "name": "transaction rollback restores",
+    "setup": [
+      "CREATE TABLE txr (v int)",
+      "INSERT INTO txr VALUES (1)",
+      "BEGIN",
+      "INSERT INTO txr VALUES (2)",
+      "ROLLBACK"
+    ],
+    "sql": "SELECT * FROM txr"
+  },
+  {
+    "name": "savepoint partial rollback",
+    "setup": [
+      "CREATE TABLE spr (v int)",
+      "BEGIN",
+      "INSERT INTO spr VALUES (1)",
+      "SAVEPOINT s1",
+      "INSERT INTO spr VALUES (2)",
+      "ROLLBACK TO s1",
+      "INSERT INTO spr VALUES (3)",
+      "COMMIT"
+    ],
+    "sql": "SELECT * FROM spr ORDER BY v"
+  },
+  {
+    "name": "concat and concat_ws variadic",
+    "sql": "SELECT concat('a', NULL, 1, true) AS a, concat_ws('-', 'x', NULL, 'y') AS b"
+  },
+  {
+    "name": "regexp functions wave2",
+    "sql": "SELECT regexp_count('aba aba', 'a', 1) AS c, regexp_instr('hello world', 'o') AS i, regexp_like('abc', '^a') AS l, regexp_substr('abc123', '[0-9]+') AS s"
+  },
+  {
+    "name": "regexp_split_to_table and array",
+    "sql": "SELECT regexp_split_to_array('a1b22c', '[0-9]+') AS arr"
+  },
+  {
+    "name": "starts_with left right reverse",
+    "sql": "SELECT starts_with('postgres', 'post') AS a, left('hello', 2) AS b, right('hello', 2) AS c, reverse('abc') AS d"
+  },
+  {
+    "name": "distinct on with order",
+    "setup": ["CREATE TABLE don2 (g text, v int)", "INSERT INTO don2 VALUES ('a', 3), ('a', 1), ('b', 5), ('b', 2)"],
+    "sql": "SELECT DISTINCT ON (g) g, v FROM don2 ORDER BY g, v DESC"
+  },
+  {
+    "name": "copy to stdout equivalent select",
+    "setup": ["CREATE TABLE cts (a int, b text)", "INSERT INTO cts VALUES (1, 'x'), (2, NULL)"],
+    "sql": "SELECT a::text || E'\\t' || coalesce(b, '\\N') AS line FROM cts ORDER BY a"
+  }
+]
