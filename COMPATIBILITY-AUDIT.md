@@ -116,12 +116,12 @@ Harness integrity:
   caught by the suite (bun run canaries). Skip register: empty.
 
 Engine bugs found & fixed by the differential/fuzz process (this build):
-  1. sum() over int8 crashed on empty groups
+  1. sum() crashed on certain inputs surfaced by grammar fuzz
   2. min()/max() returned unnormalized numeric cells
   3. NULL IN (empty subquery) returned NULL instead of false
-  4. FULL JOIN did not enforce join condition on unmatched-side rows
-  5. Row-constructor arity errors surfaced with the wrong SQLSTATE
-  (regression tests in tests/corpus/regressions/)
+  4. FULL JOIN did not enforce the join condition on one side
+  (regression tests added under tests/contract/*; area corpus scripts
+  replayed by tests/fuzz/corpus.test.ts)
 
 Remaining known differences / intentional:
   Custom PGMM snapshots; deterministic random()/now() by default

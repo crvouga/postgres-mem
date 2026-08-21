@@ -1,5 +1,5 @@
 import type { BenchSpec, BenchStatement } from "../harness/types.ts";
-import { fillUsers, pkLookupCtx, type PreparedCtx } from "./populate.ts";
+import { fillUsers, type PreparedCtx, pkLookupCtx } from "./populate.ts";
 import { spec, tiersForSize } from "./tiers.ts";
 
 const SIZES = [100, 1_000, 10_000, 100_000];

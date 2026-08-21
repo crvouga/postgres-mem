@@ -14,8 +14,7 @@ const TOP_SPENDERS_SQL = `
   LIMIT 20
 `;
 
-const ORDER_ITEMS_SQL =
-  "SELECT i.id, i.product, i.qty FROM items i WHERE i.order_id = $1 ORDER BY i.id LIMIT 50";
+const ORDER_ITEMS_SQL = "SELECT i.id, i.product, i.qty FROM items i WHERE i.order_id = $1 ORDER BY i.id LIMIT 50";
 
 export function appSpecs(): BenchSpec[] {
   return [
