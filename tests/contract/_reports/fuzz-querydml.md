@@ -8,14 +8,20 @@ constrained to avoid these shapes; fix centrally in the engine, then relax the g
 
 ## New divergences found by the fuzz suite
 
-### FULL JOIN with a non-equality predicate is not rejected
+> **All four entries below are FIXED in the engine** (select.ts: per-group aggregate type
+> reconciliation + FULL JOIN condition check; eval.ts: IN over empty sets) and pinned as
+> differential regressions in `tests/contract/aggregates/empty-groups.test.ts`. The entries
+> are kept for the record; the generator constraints noted inline have been relaxed where
+> mechanical.
+
+### FULL JOIN with a non-equality predicate is not rejected (FIXED)
 
 - SQL: `SELECT ... FROM l FULL JOIN r ON l.x <> r.x ORDER BY ...`
 - memory: ok (executes the join)
 - oracle: error 0A000 `FULL JOIN is only supported with merge-joinable or hash-joinable join conditions`
 - Constraint: `tests/fuzz/joins.test.ts` forces `=` as the join predicate whenever the join type is FULL.
 
-### sum() over an empty input set crashes (internal numeric error)
+### sum() over an empty input set crashes (internal numeric error) (FIXED)
 
 - SQL: `SELECT g, sum(v) FILTER (WHERE v > 0) AS x FROM gt GROUP BY g ORDER BY g` over rows `(0, NULL), (1, 20)`
   — memory: error (no SQLSTATE) `undefined is not an object (evaluating '(neg ? -v.coef : v.coef).toString')`;
@@ -28,7 +34,7 @@ constrained to avoid these shapes; fix centrally in the engine, then relax the g
 - Constraint: `tests/fuzz/aggregates.test.ts` uses FILTER only on `count`; `tests/fuzz/subqueries.test.ts`
   uses only `count(*)` in correlated scalar subqueries.
 
-### min/max produce unnormalized (raw JS number) cells in some shapes
+### min/max produce unnormalized (raw JS number) cells in some shapes (FIXED)
 
 - SQL: `SELECT g, min(v) FILTER (WHERE v > 0) AS x FROM gt GROUP BY g ORDER BY g` over rows `(0, NULL), (1, 20)`
   — memory: values `[["0", null], ["1", 20]]` (raw number `20`, not text); oracle: `[["0", null], ["1", "20"]]`.
@@ -38,7 +44,7 @@ constrained to avoid these shapes; fix centrally in the engine, then relax the g
   (With no NULL `a` rows in `s`, the same query renders text correctly.)
 - Constraint: same generator restrictions as the sum() crash above.
 
-### NULL IN / NOT IN an empty subquery returns NULL instead of false/true
+### NULL IN / NOT IN an empty subquery returns NULL instead of false/true (FIXED)
 
 - SQL: `SELECT NULL::int IN (SELECT a FROM s WHERE false) AS v` — memory: NULL; oracle: `f`.
 - SQL: `SELECT NULL::int NOT IN (SELECT a FROM s WHERE false) AS v` — memory: NULL; oracle: `t`.

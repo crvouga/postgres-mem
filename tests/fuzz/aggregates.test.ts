@@ -57,11 +57,11 @@ describe("aggregate differential fuzz", () => {
               "avg(v)::numeric AS av",
               "count(DISTINCT v) AS c_d",
               "sum(DISTINCT v) AS s_d",
-              // FILTER is restricted to count: sum/min/max with a FILTER that
-              // matches no rows is a recorded divergence (memory crashes or
-              // returns unnormalized cells; see tests/contract/_reports/fuzz-querydml.md).
               `count(v) FILTER (WHERE v > (${threshold})) AS f_gt`,
               `count(*) FILTER (WHERE v <= (${threshold})) AS c_f`,
+              `sum(v) FILTER (WHERE v > (${threshold})) AS s_f`,
+              `min(v) FILTER (WHERE v > (${threshold})) AS mn_f`,
+              `max(v) FILTER (WHERE v > (${threshold})) AS mx_f`,
             ].join(", ");
             const keys = groupCount === 0 ? [] : groupCount === 1 ? ["g1"] : ["g1", "g2"];
             const groupBy = keys.length > 0 ? ` GROUP BY ${keys.join(", ")}` : "";

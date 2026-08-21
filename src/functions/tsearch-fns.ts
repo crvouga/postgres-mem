@@ -1,3 +1,4 @@
+import { pgError } from "../errors/error.ts";
 import {
   parseTsvector,
   phrasetoTsquery,
@@ -11,7 +12,6 @@ import {
   tsvectorSetweight,
   tsvectorStrip,
 } from "../tsearch/tsearch.ts";
-import { pgError } from "../errors/error.ts";
 import { castTo } from "../types/cast.ts";
 import { type PgArray, tv } from "../types/value.ts";
 import { argText, type ScalarFn, strict } from "./util.ts";

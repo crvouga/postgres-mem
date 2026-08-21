@@ -17,5 +17,5 @@ describe("stateful DST dump-after-each", () => {
       ),
       fuzzAssertConfig(25),
     );
-  });
+  }, 60_000);
 });

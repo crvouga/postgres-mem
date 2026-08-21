@@ -28,6 +28,8 @@ export const FUN_SECTION: CatalogSection = section("FUN", "Built-in scalar funct
     "round float8 ties",
     D,
     "memory rounds float8 ties away from zero (round(2.5::float8) = 3); PostgreSQL rounds half to even (= 2)",
+    undefined,
+    "round-half-away-from-zero",
   ],
   ["trunc-01", "trunc 1-arg and 2-arg"],
   ["sign-01", "sign across types"],

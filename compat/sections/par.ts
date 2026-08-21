@@ -20,6 +20,8 @@ export const PAR_SECTION: CatalogSection = section("PAR", "Parser & grammar", tr
     "Row constructor size mismatch",
     D,
     "memory raises 21000 cardinality at execution; PostgreSQL raises 42601 syntax at parse time",
+    undefined,
+    "row-value-subquery-arity",
   ],
   ["arr-01", "ARRAY[...] constructor"],
   ["arr-02", "Nested ARRAY constructor"],
@@ -53,5 +55,7 @@ export const PAR_SECTION: CatalogSection = section("PAR", "Parser & grammar", tr
     "Nested unary minus on numeric literals",
     D,
     "memory folds repeated unary minus into the literal text and rejects it; PostgreSQL evaluates - -5 to 5",
+    undefined,
+    "unary-minus-folding",
   ],
 ]);

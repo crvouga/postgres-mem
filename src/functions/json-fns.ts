@@ -25,12 +25,12 @@ import {
   isPgRecord,
   type JsonbWrap,
   type PgArray,
-  UTC_INPUT,
   type PgRecord,
   type TypedValue,
   type TypeId,
   tv,
   UNKNOWN,
+  UTC_INPUT,
   wrapJsonb,
 } from "../types/value.ts";
 import { argText, type ScalarFn, strict } from "./util.ts";

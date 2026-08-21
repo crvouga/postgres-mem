@@ -1,5 +1,5 @@
-import type { Expr, SelectStmt, Statement } from "../ast/nodes.ts";
 import { registerCodec } from "../api/database.ts";
+import type { Expr, SelectStmt, Statement } from "../ast/nodes.ts";
 import { PostgresError } from "../errors/error.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { Prng } from "../runtime/prng.ts";
@@ -18,8 +18,7 @@ import {
   type ViewData,
 } from "../storage/database-state.ts";
 import type { Interval } from "../types/datetime.ts";
-import { parseJsonText } from "../types/jsonb.ts";
-import { jsonbText } from "../types/jsonb.ts";
+import { jsonbText, parseJsonText } from "../types/jsonb.ts";
 import type { Numeric } from "../types/numeric.ts";
 import type { Datum, PgArray, PgRecord, TypeId } from "../types/value.ts";
 

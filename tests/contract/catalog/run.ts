@@ -91,7 +91,7 @@ export function runCatalog(section: CatalogSection, cases: CatalogCase[]): void 
         });
         break;
       case "divergence":
-        if (scenario.kind !== "documented_divergence" && scenario.kind !== "fuzz" && scenario.kind !== "ecosystem") {
+        if (scenario.kind === "differential") {
           throw new Error(`${scenario.id}: divergence case requires a non-differential scenario kind`);
         }
         divergence(scenario.id, scenario.title, spec.fn);

@@ -34,11 +34,10 @@ describe("subquery differential fuzz", () => {
             await seed(db, "s", sRows);
           }
 
-          // Correlated scalar subqueries use count(*) only: correlated min/max/sum
-          // return unnormalized cells or crash in memory when the correlated set
-          // is empty or contains NULLs (see tests/contract/_reports/fuzz-querydml.md).
           const cases = [
             "SELECT t.id, (SELECT max(s.a) FROM s) AS m FROM t ORDER BY t.id",
+            "SELECT t.id, (SELECT sum(s.a) FROM s WHERE s.g = t.g) AS m FROM t ORDER BY t.id",
+            "SELECT t.id, (SELECT min(s.a) FROM s WHERE s.g = t.g) AS m FROM t ORDER BY t.id",
             "SELECT t.id, (SELECT count(*) FROM s WHERE s.a = t.a) AS c FROM t ORDER BY t.id",
             `SELECT t.id, (SELECT count(*) FROM s WHERE s.g = t.g AND s.a > (${k})) AS c FROM t ORDER BY t.id`,
             "SELECT t.id FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.a = t.a) ORDER BY t.id",
@@ -83,26 +82,16 @@ describe("subquery differential fuzz", () => {
               haystack.length === 0
                 ? "((-999))"
                 : `(${haystack.map((v) => (v === null ? "NULL" : `(${v})`)).join(", ")})`;
-            // NULL IN/NOT IN an *empty* subquery is a recorded divergence
-            // (memory NULL, oracle f/t) — those shapes are skipped when the
-            // needle is NULL / the subquery can be empty.
             const cases = [
               "SELECT t.id FROM t WHERE t.a IN (SELECT a FROM s) ORDER BY t.id",
+              "SELECT t.id FROM t WHERE t.a NOT IN (SELECT a FROM s) ORDER BY t.id",
               `SELECT t.id FROM t WHERE t.a IN ${inList} ORDER BY t.id`,
               `SELECT t.id FROM t WHERE t.a NOT IN ${inList} ORDER BY t.id`,
+              `SELECT ${lit} IN (SELECT a FROM s) AS v`,
+              `SELECT ${lit} NOT IN (SELECT a FROM s) AS v`,
+              `SELECT ${lit} IN (SELECT a FROM s WHERE false) AS v`,
+              `SELECT ${lit} NOT IN (SELECT a FROM s WHERE false) AS v`,
             ];
-            if (needle !== null || haystack.length > 0) {
-              cases.push(`SELECT ${lit} IN (SELECT a FROM s) AS v`, `SELECT ${lit} NOT IN (SELECT a FROM s) AS v`);
-            }
-            if (needle !== null) {
-              cases.push(
-                `SELECT ${lit} IN (SELECT a FROM s WHERE false) AS v`,
-                `SELECT ${lit} NOT IN (SELECT a FROM s WHERE false) AS v`,
-              );
-            }
-            if (haystack.length > 0) {
-              cases.push("SELECT t.id FROM t WHERE t.a NOT IN (SELECT a FROM s) ORDER BY t.id");
-            }
             for (const sql of cases) {
               compareOrReport(
                 "in-null",

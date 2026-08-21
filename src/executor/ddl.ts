@@ -37,8 +37,8 @@ import {
 } from "../storage/database-state.ts";
 import { castTo } from "../types/cast.ts";
 import { resolveTypeName } from "../types/resolve.ts";
-import { type Datum, type TypeId, UNKNOWN, tv } from "../types/value.ts";
-import { type ExecEnv, type ExecResult, RowScope, commandResult } from "./relation.ts";
+import { type Datum, type TypeId, tv, UNKNOWN } from "../types/value.ts";
+import { commandResult, type ExecEnv, type ExecResult, RowScope } from "./relation.ts";
 import { evalScalar, executeSelectStmt } from "./select.ts";
 
 // ---------------------------------------------------------------------------

@@ -23,8 +23,8 @@ import { sequenceNextval } from "../functions/misc-fns.ts";
 import type { ColumnMeta, TableData } from "../storage/database-state.ts";
 import { castTo } from "../types/cast.ts";
 import { datumKey } from "../types/compare.ts";
-import { type Datum, type TypeId, type TypedValue, UNKNOWN, tv } from "../types/value.ts";
-import { type ExecEnv, type ExecResult, type Relation, RowScope, commandResult, inferColumnName } from "./relation.ts";
+import { type Datum, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
+import { commandResult, type ExecEnv, type ExecResult, inferColumnName, type Relation, RowScope } from "./relation.ts";
 import { applyWith, buildFrom, evalPredicate, evalScalar, executeSelectStmt } from "./select.ts";
 import { fireRowTriggers } from "./triggers.ts";
 

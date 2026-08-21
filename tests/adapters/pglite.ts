@@ -20,6 +20,9 @@ async function getShared(): Promise<{ db: PGlite; parsers: Record<number, (x: st
     shared = (async () => {
       const db = new PGlite();
       await db.waitReady;
+      // PGlite's WASM boot leaks process.exitCode = 99 (electric-sql/pglite#975);
+      // clear it so a green `bun test` run exits 0. Bun ignores `= undefined`.
+      process.exitCode = 0;
       const res = await db.query<{ oid: number }>("SELECT oid FROM pg_type");
       const parsers: Record<number, (x: string) => string> = {};
       for (const row of res.rows) parsers[Number(row.oid)] = (x) => x;

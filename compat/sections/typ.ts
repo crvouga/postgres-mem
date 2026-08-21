@@ -20,6 +20,8 @@ export const TYP_SECTION: CatalogSection = section("TYP", "Scalar type system & 
     "Float literal beyond float8 range",
     D,
     "memory saturates '1e400'::float8 to Infinity; PostgreSQL raises 22003 out of range",
+    undefined,
+    "float8-overflow-saturates",
   ],
   ["float-05", "float8 binary artifacts surface"],
   ["num-01", "Numeric literal typing and scale preservation"],

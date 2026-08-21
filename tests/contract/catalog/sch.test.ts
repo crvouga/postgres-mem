@@ -146,7 +146,7 @@ runCatalog(SCH_SECTION, [
   {
     id: "SCH-drop-05",
     kind: "sequence",
-    steps: [{ sql: "DROP SCHEMA IF EXISTS no_such_schema" }, { sql: "SELECT 1 AS v", query: true }],
+    steps: [{ sql: "DROP SCHEMA IF EXISTS no_such_schema" }, { sql: "SELECT current_schema() AS s", query: true }],
   },
   {
     id: "SCH-drop-06",

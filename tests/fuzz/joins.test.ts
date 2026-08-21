@@ -38,9 +38,9 @@ describe("join differential fuzz", () => {
             await seedSide(db, "r", right);
           }
 
-          // FULL JOIN with a non-equality predicate is a recorded divergence
-          // (oracle raises 0A000, memory executes it) — keep FULL equi-join only.
-          const joinOp = joinType === "FULL" ? "=" : op;
+          // FULL JOIN with a non-equality predicate errors 0A000 on both engines
+          // (category parity via compareOrReport), so any operator is fair game.
+          const joinOp = op;
           const joinClause =
             joinType === "CROSS" ? "CROSS JOIN r" : `${joinType} JOIN r ON l.${col} ${joinOp} r.${col}`;
           const sql = [

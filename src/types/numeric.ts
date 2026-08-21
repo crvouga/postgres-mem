@@ -491,6 +491,7 @@ function fxExp(x: bigint, S: number): bigint {
 const FX_GUARD = 24;
 
 /** PG's literal log10(e) constant from numeric.c (not Math.LOG10E) */
+// biome-ignore lint/suspicious/noApproximativeNumericConstant: intentionally PG's truncated constant
 const PG_LOG10E = 0.434294481903252;
 
 /**

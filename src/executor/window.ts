@@ -6,7 +6,7 @@ import { createAggregate, isAggregateName } from "../functions/aggregates.ts";
 import { isWindowFunctionName } from "../functions/window.ts";
 import { castTo } from "../types/cast.ts";
 import { datumCompare, datumKey } from "../types/compare.ts";
-import { type Datum, type TypeId, type TypedValue, UNKNOWN, tv } from "../types/value.ts";
+import { type Datum, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
 
 /** Evaluator callback: evaluate `e` in the context of source row `rowIdx`. */
 export type RowEval = (rowIdx: number, e: Expr) => TypedValue;

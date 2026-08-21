@@ -264,7 +264,10 @@ runCatalog(TRG_SECTION, [
     id: "TRG-drop-03",
     kind: "sequence",
     setup: ["CREATE TABLE t (id int)"],
-    steps: [{ sql: "DROP TRIGGER IF EXISTS no_such_trigger ON t" }, { sql: "SELECT 1 AS v", query: true }],
+    steps: [
+      { sql: "DROP TRIGGER IF EXISTS no_such_trigger ON t" },
+      { sql: "SELECT count(*) AS n FROM t", query: true },
+    ],
   },
   {
     id: "TRG-life-01",

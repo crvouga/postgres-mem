@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ErrorCategory } from "./types.ts";
 
 /**
@@ -82,4 +84,33 @@ export function categoryFromSqlstate(code: string | undefined): ErrorCategory {
     default:
       return "other";
   }
+}
+
+export interface DivergenceEntry {
+  id: string;
+  scope: string;
+  predicate: string;
+  specifiedBehavior: string;
+  pinnedBy: string[];
+}
+
+export interface DivergenceFile {
+  version: number;
+  entries: DivergenceEntry[];
+}
+
+let cachedDivergences: DivergenceFile | undefined;
+
+export function loadDivergences(root = join(import.meta.dir, "../..")): DivergenceFile {
+  if (cachedDivergences) return cachedDivergences;
+  cachedDivergences = JSON.parse(readFileSync(join(root, "compat/divergences.json"), "utf8")) as DivergenceFile;
+  return cachedDivergences;
+}
+
+export function divergenceById(id: string): DivergenceEntry | undefined {
+  return loadDivergences().entries.find((entry) => entry.id === id);
+}
+
+export function knownDivergenceIds(): Set<string> {
+  return new Set(loadDivergences().entries.map((entry) => entry.id));
 }

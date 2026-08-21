@@ -33,11 +33,15 @@ export const CAT_SECTION: CatalogSection = section("CAT", "pg_catalog and inform
     "version() full text names postgres-mem",
     D,
     "memory: 'PostgreSQL 18.3 (postgres-mem) on TypeScript, in-memory engine'; oracle reports the real build banner",
+    undefined,
+    "version-banner",
   ],
   [
     "viewdef-01",
     "pg_get_viewdef is not implemented",
     D,
     "memory: 42883 function pg_get_viewdef(...) does not exist; PostgreSQL returns the view definition",
+    undefined,
+    "pg-get-viewdef-missing",
   ],
 ]);

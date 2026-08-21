@@ -1,4 +1,5 @@
 import { pgError, unsupported } from "../errors/error.ts";
+import { parseTsqueryText, parseTsvector, tsqueryText } from "../tsearch/tsearch.ts";
 import {
   formatDate,
   formatInterval,
@@ -12,7 +13,6 @@ import {
   parseTimestamp,
   parseTimestampTz,
 } from "./datetime.ts";
-import { parseTsqueryText, parseTsvector, tsqueryText } from "../tsearch/tsearch.ts";
 import { type JsonbValue, jsonbText, parseJsonText, validateJsonText } from "./jsonb.ts";
 import { type Numeric, numericText, parseNumeric } from "./numeric.ts";
 

@@ -1,6 +1,6 @@
 import { pgError } from "../errors/error.ts";
 import { UNIX_EPOCH_MICROS_FROM_PG } from "../types/datetime.ts";
-import { type Datum, type OutputCtx, type TypeId, type TypedValue, UNKNOWN, datumText, tv } from "../types/value.ts";
+import { type Datum, datumText, type OutputCtx, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
 
 /** JavaScript values accepted as query parameters (`$1..$n`). */
 export type BindValue = null | undefined | boolean | number | bigint | string | Uint8Array | Date;

@@ -34,5 +34,6 @@ export const TXN_SECTION: CatalogSection = section("TXN", "Transactions and save
     D,
     "memory keeps executing statements after a failure inside BEGIN; PostgreSQL rejects them with 25P02",
     ["tests/contract/_reports/session-system.md"],
+    "no-aborted-transaction-state",
   ],
 ]);

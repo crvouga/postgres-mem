@@ -1,6 +1,6 @@
 import { pgError } from "../errors/error.ts";
 import type { EngineCtx } from "../expressions/context.ts";
-import type { Datum, TypeId, TypedValue } from "../types/value.ts";
+import type { Datum, TypedValue, TypeId } from "../types/value.ts";
 import { tv } from "../types/value.ts";
 
 /** A column of an intermediate or final result relation. */

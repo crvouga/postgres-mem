@@ -28,7 +28,7 @@ import {
   executeTruncate,
 } from "./ddl.ts";
 import { executeDelete, executeInsert, executeUpdate } from "./dml.ts";
-import { type ExecEnv, type ExecResult, commandResult, relationResult } from "./relation.ts";
+import { commandResult, type ExecEnv, type ExecResult, relationResult } from "./relation.ts";
 import { executeSelectStmt, setStatementRunner } from "./select.ts";
 import {
   executeCopy,

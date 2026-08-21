@@ -1,4 +1,5 @@
 import type {
+  ColumnRef,
   CommonTableExpr,
   Expr,
   FromItem,
@@ -23,14 +24,14 @@ import { catalogRelation } from "../schema/catalog.ts";
 import type { FunctionData } from "../storage/database-state.ts";
 import { castTo, unifyTypes } from "../types/cast.ts";
 import { datumCompare, datumKey } from "../types/compare.ts";
-import { type Datum, type TypeId, type TypedValue, UNKNOWN, tv } from "../types/value.ts";
+import { type Datum, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
 import {
+  childEnv,
   type ExecEnv,
   type ExecResult,
+  inferColumnName,
   type Relation,
   RowScope,
-  childEnv,
-  inferColumnName,
   relationResult,
 } from "./relation.ts";
 import { computeWindowValues } from "./window.ts";
@@ -633,6 +634,81 @@ function joinSource(env: ExecEnv, join: Extract<FromItem, { type: "from_join" }>
   return { rel: { columns: outColumns, rows }, rangeVars };
 }
 
+/** Collect every colref in an expression subtree (descends into subqueries). */
+function collectColrefs(node: unknown, out: ColumnRef[]): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectColrefs(item, out);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  if (rec.type === "colref") {
+    out.push(node as ColumnRef);
+    return;
+  }
+  for (const value of Object.values(rec)) collectColrefs(value, out);
+}
+
+type JoinSide = "left" | "right" | "none" | "mixed";
+
+function joinSideOf(expr: Expr, left: Relation, right: Relation): JoinSide {
+  const refs: ColumnRef[] = [];
+  collectColrefs(expr, refs);
+  let side: JoinSide = "none";
+  const fold = (s: "left" | "right" | "mixed"): void => {
+    if (side === "none") side = s;
+    else if (side !== s) side = "mixed";
+  };
+  for (const ref of refs) {
+    const alias = ref.parts.length >= 2 ? ref.parts[ref.parts.length - 2]! : null;
+    const name = ref.parts[ref.parts.length - 1]!;
+    const inLeft = alias
+      ? left.columns.some((c) => c.table === alias)
+      : left.columns.some((c) => !c.hidden && c.name === name);
+    const inRight = alias
+      ? right.columns.some((c) => c.table === alias)
+      : right.columns.some((c) => !c.hidden && c.name === name);
+    if (inLeft && !inRight) fold("left");
+    else if (inRight && !inLeft) fold("right");
+    else fold("mixed");
+  }
+  return side;
+}
+
+/**
+ * PostgreSQL only executes FULL JOIN with merge/hash-joinable conditions:
+ * a constant condition, or at least one top-level AND conjunct that is an
+ * equality between a left-only and a right-only expression.
+ */
+function checkFullJoinCondition(on: Expr, left: Relation, right: Relation): void {
+  const conjuncts: Expr[] = [];
+  const split = (e: Expr): void => {
+    if (e.type === "binop" && e.op === "and") {
+      split(e.left);
+      split(e.right);
+      return;
+    }
+    conjuncts.push(e);
+  };
+  split(on);
+  let anyRefs = false;
+  for (const c of conjuncts) {
+    const refs: ColumnRef[] = [];
+    collectColrefs(c, refs);
+    if (refs.length > 0) anyRefs = true;
+    if (c.type !== "binop" || c.op !== "=") continue;
+    const ls = joinSideOf(c.left, left, right);
+    const rs = joinSideOf(c.right, left, right);
+    if ((ls === "left" && rs === "right") || (ls === "right" && rs === "left")) return;
+  }
+  if (!anyRefs) return;
+  throw pgError(
+    "unsupported",
+    "FULL JOIN is only supported with merge-joinable or hash-joinable join conditions",
+    "0A000",
+  );
+}
+
 function combineJoin(
   env: ExecEnv,
   kind: "inner" | "left" | "right" | "full" | "cross",
@@ -644,6 +720,7 @@ function combineJoin(
   rangeVars: Set<string>,
 ): Relation {
   const ctx = env.ctx;
+  if (kind === "full" && on !== null) checkFullJoinCondition(on, left, right);
   let columns: Relation["columns"];
   let usingLeftIdx: number[] = [];
   let usingRightIdx: number[] = [];

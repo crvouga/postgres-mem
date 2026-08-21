@@ -1,12 +1,12 @@
 import type { Statement as AstStatement } from "../ast/nodes.ts";
 import { pgError } from "../errors/error.ts";
-import { EngineCtx } from "../expressions/context.ts";
 import { executeStatement } from "../executor/execute.ts";
 import type { ExecEnv, ExecResult } from "../executor/relation.ts";
+import { EngineCtx } from "../expressions/context.ts";
 import { parse } from "../parser/index.ts";
 import type { TypedValue } from "../types/value.ts";
-import { UNKNOWN, datumText } from "../types/value.ts";
-import { type BindValue, type QueryRow, bindValueToTyped, datumToJs } from "./bind.ts";
+import { datumText, UNKNOWN } from "../types/value.ts";
+import { type BindValue, bindValueToTyped, datumToJs, type QueryRow } from "./bind.ts";
 import type { Database } from "./database.ts";
 
 /** Row-count summary returned by {@link Statement.run}. */

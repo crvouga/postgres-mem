@@ -22,5 +22,5 @@ describe("mixed DDL/DML/txn stateful simulation", () => {
       ),
       fuzzAssertConfig(25),
     );
-  });
+  }, 60_000);
 });

@@ -36,6 +36,7 @@ export const TRG_SECTION: CatalogSection = section("TRG", "Triggers", true, [
     D,
     "memory fires triggers in creation order; PostgreSQL fires them in name order",
     REPORT,
+    "trigger-order-creation",
   ],
   [
     "updof-01",
@@ -43,11 +44,14 @@ export const TRG_SECTION: CatalogSection = section("TRG", "Triggers", true, [
     D,
     "memory fires a BEFORE UPDATE OF a trigger even when the UPDATE only touches other columns",
     REPORT,
+    "trigger-update-of-ignored",
   ],
   [
     "instead-01",
     "INSTEAD OF triggers on views are unsupported",
     D,
     "CREATE TRIGGER ... INSTEAD OF on a view fails in memory; PostgreSQL supports it",
+    undefined,
+    "instead-of-triggers-unsupported",
   ],
 ]);

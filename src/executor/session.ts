@@ -17,9 +17,9 @@ import { DatabaseState } from "../storage/database-state.ts";
 import { TransactionManager } from "../transactions/manager.ts";
 import { castTo } from "../types/cast.ts";
 import { resolveTypeName } from "../types/resolve.ts";
-import { type Datum, UNKNOWN, datumText, tv } from "../types/value.ts";
+import { type Datum, datumText, tv, UNKNOWN } from "../types/value.ts";
 import { executeInsert } from "./dml.ts";
-import { type ExecEnv, type ExecResult, commandResult } from "./relation.ts";
+import { commandResult, type ExecEnv, type ExecResult } from "./relation.ts";
 import { evalScalar, executeSelectStmt, runStatement } from "./select.ts";
 
 // ---------------------------------------------------------------------------

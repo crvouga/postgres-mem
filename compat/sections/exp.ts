@@ -24,6 +24,8 @@ export const EXP_SECTION: CatalogSection = section("EXP", "Expressions & operato
     "Row-value IN subquery",
     D,
     "memory rejects multi-column row-value IN (SELECT ...) with 'subquery has too many columns'; PostgreSQL evaluates it",
+    undefined,
+    "row-value-subquery-arity",
   ],
   ["case-01", "CASE with NULL condition takes ELSE"],
   ["case-02", "CASE evaluates branches lazily"],

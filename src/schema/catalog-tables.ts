@@ -1,5 +1,5 @@
+import type { Relation, RelColumn } from "../executor/relation.ts";
 import type { EngineCtx } from "../expressions/context.ts";
-import type { RelColumn, Relation } from "../executor/relation.ts";
 import { getAggregateFactories } from "../functions/aggregates.ts";
 import { getScalarFunctions } from "../functions/scalar.ts";
 import { getSrfFunctions } from "../functions/srf.ts";
@@ -7,10 +7,10 @@ import { WINDOW_FUNCTION_NAMES } from "../functions/window.ts";
 import type { DatabaseState, SequenceData, TableData } from "../storage/database-state.ts";
 import {
   type Datum,
-  TYPE_OIDS,
-  type TypeId,
   isArrayType,
   isEnumType,
+  TYPE_OIDS,
+  type TypeId,
   typeDisplayName,
   typeOid,
 } from "../types/value.ts";

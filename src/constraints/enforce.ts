@@ -1,8 +1,8 @@
 import { pgError } from "../errors/error.ts";
-import { evalExpr } from "../expressions/eval.ts";
 import type { ExecEnv } from "../executor/relation.ts";
 import { RowScope } from "../executor/relation.ts";
 import { makeEvalScope } from "../executor/select.ts";
+import { evalExpr } from "../expressions/eval.ts";
 import type { IndexMeta, TableData } from "../storage/database-state.ts";
 import { castTo } from "../types/cast.ts";
 import { datumKey } from "../types/compare.ts";
@@ -167,7 +167,7 @@ export function findConflict(env: ExecEnv, table: TableData, spec: UniqueSpec, r
   return null;
 }
 
-export type { UniqueSpec, IndexMeta };
+export type { IndexMeta, UniqueSpec };
 
 // ---------------------------------------------------------------------------
 // foreign keys

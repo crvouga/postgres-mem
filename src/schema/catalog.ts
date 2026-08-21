@@ -1,5 +1,5 @@
-import type { EngineCtx } from "../expressions/context.ts";
 import type { Relation } from "../executor/relation.ts";
+import type { EngineCtx } from "../expressions/context.ts";
 
 /**
  * Virtual pg_catalog / information_schema relations, materialized on demand.

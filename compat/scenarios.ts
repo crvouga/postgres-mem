@@ -1,11 +1,8 @@
 /**
  * Construct-level drop-in parity catalog. Every scenario ID here must execute
  * in `tests/contract/catalog/<code>.test.ts` — the gate enforces the mapping.
- *
- * The FZZ section (fuzz/property harness pointers) is added together with the
- * fuzz suite.
  */
-import { type CatalogSection, SCENARIO_ID_RE } from "./scenario-types.ts";
+import { type CatalogSection, SCENARIO_ID_RE, type Scenario } from "./scenario-types.ts";
 import { AGG_SECTION } from "./sections/agg.ts";
 import { API_SECTION } from "./sections/api.ts";
 import { ARR_SECTION } from "./sections/arr.ts";
@@ -21,6 +18,7 @@ import { ECO_SECTION } from "./sections/eco.ts";
 import { ERR_SECTION } from "./sections/err.ts";
 import { EXP_SECTION } from "./sections/exp.ts";
 import { FUN_SECTION } from "./sections/fun.ts";
+import { FZZ_SECTION } from "./sections/fzz.ts";
 import { GUC_SECTION } from "./sections/guc.ts";
 import { JOI_SECTION } from "./sections/joi.ts";
 import { JSN_SECTION } from "./sections/jsn.ts";
@@ -71,8 +69,21 @@ export const SCENARIO_CATALOG: CatalogSection[] = [
   ERR_SECTION,
   UNI_SECTION,
   LIM_SECTION,
+  FZZ_SECTION,
   ECO_SECTION,
 ];
+
+export function allScenarios(): Scenario[] {
+  return SCENARIO_CATALOG.flatMap((section) => section.scenarios);
+}
+
+export function scenarioById(): Map<string, Scenario> {
+  return new Map(allScenarios().map((scenario) => [scenario.id, scenario]));
+}
+
+export function knownScenarioIds(): Set<string> {
+  return new Set(allScenarios().map((scenario) => scenario.id));
+}
 
 const seen = new Set<string>();
 for (const section of SCENARIO_CATALOG) {
