@@ -1,0 +1,183 @@
+import { describe, test } from "bun:test";
+import * as fc from "fast-check";
+import { fuzzAssertConfig, intArb, nullArb, textArb } from "../config.ts";
+import { compareOrReport, sqlLiteral, withDatabases } from "../helpers.ts";
+
+const rowArb = fc.record({
+  id: fc.integer({ min: 1, max: 40 }),
+  a: fc.oneof(nullArb, intArb),
+  b: fc.oneof(
+    nullArb,
+    textArb.filter((s) => s.length <= 12),
+  ),
+});
+
+type Row = fc.InferValue<typeof rowArb>;
+
+const predicateArb = fc.oneof(
+  fc.record({ kind: fc.constant("gt" as const), n: intArb }),
+  fc.record({ kind: fc.constant("lt" as const), n: intArb }),
+  fc.record({ kind: fc.constant("eq" as const), n: intArb }),
+  fc.record({ kind: fc.constant("isnull" as const) }),
+  fc.record({ kind: fc.constant("like" as const), p: fc.constantFrom("%", "a%", "%z", "_", "%b%") }),
+);
+
+type Predicate = fc.InferValue<typeof predicateArb>;
+
+/** Boolean predicate over columns `a` (int) / `b` (text), optionally qualified. */
+function predicateSql(pred: Predicate, prefix = ""): string {
+  const a = `${prefix}a`;
+  const b = `${prefix}b`;
+  if (pred.kind === "gt") return `${a} > ${pred.n}`;
+  if (pred.kind === "lt") return `${a} < ${pred.n}`;
+  if (pred.kind === "eq") return `${a} = ${pred.n}`;
+  if (pred.kind === "isnull") return `${a} IS NULL`;
+  return `${b} LIKE ${sqlLiteral(pred.p)}`;
+}
+
+function insertSql(table: string, rows: Row[]): string {
+  const tuples = rows.map((r) => `(${r.id}, ${sqlLiteral(r.a)}, ${sqlLiteral(r.b)})`).join(", ");
+  return `INSERT INTO ${table} VALUES ${tuples}`;
+}
+
+async function seed(dbs: { exec(sql: string): Promise<{ ok: boolean }> }[], table: string, rows: Row[]): Promise<void> {
+  for (const db of dbs) {
+    const created = await db.exec(`CREATE TABLE ${table}(id int PRIMARY KEY, a int, b text)`);
+    if (!created.ok) throw new Error(`seed: CREATE TABLE ${table} failed`);
+    if (rows.length > 0) {
+      const inserted = await db.exec(insertSql(table, rows));
+      if (!inserted.ok) throw new Error(`seed: INSERT INTO ${table} failed`);
+    }
+  }
+}
+
+/**
+ * Ternary Logic Partitioning (SQLancer-style):
+ * |Q| = |Q WHERE P| + |Q WHERE NOT P| + |Q WHERE (P) IS NULL|
+ * on both engines, and each partition's rows must match across engines.
+ */
+describe("TLP metamorphic fuzz", () => {
+  test("single-table partition counts sum to full scan on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 3, maxLength: 20 }),
+        predicateArb,
+        async (rows, pred) => {
+          const p = predicateSql(pred);
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "t", rows);
+
+            const full = "SELECT id, a, b FROM t ORDER BY id";
+            const partTrue = `SELECT id, a, b FROM t WHERE (${p}) ORDER BY id`;
+            const partFalse = `SELECT id, a, b FROM t WHERE NOT (${p}) ORDER BY id`;
+            const partNull = `SELECT id, a, b FROM t WHERE (${p}) IS NULL ORDER BY id`;
+
+            const counts = { memory: 0, postgres: 0 };
+            for (const [label, sql, sign] of [
+              ["full", full, -1],
+              ["true", partTrue, 1],
+              ["false", partFalse, 1],
+              ["null", partNull, 1],
+            ] as const) {
+              const memRes = await memory.query(sql);
+              const pgRes = await postgres.query(sql);
+              compareOrReport(`tlp-${label}`, sql, { rows, pred }, memRes, pgRes);
+              counts.memory += sign * memRes.values.length;
+              counts.postgres += sign * pgRes.values.length;
+            }
+            for (const [engine, delta] of Object.entries(counts)) {
+              if (delta !== 0) {
+                throw new Error(`TLP cardinality broken on ${engine}: partitions - full = ${delta}, pred=${p}`);
+              }
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(15),
+    );
+  }, 120_000);
+
+  test("two-table INNER JOIN partitions match on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 10 }),
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 10 }),
+        predicateArb,
+        async (left, right, pred) => {
+          const p = predicateSql(pred, "l.");
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "l", left);
+            await seed([memory, postgres], "r", right);
+
+            const base = "SELECT l.id AS lid, r.id AS rid, l.a, r.b FROM l INNER JOIN r ON l.id = r.id";
+            const order = "ORDER BY lid, rid";
+            const full = `${base} ${order}`;
+            const partTrue = `${base} WHERE (${p}) ${order}`;
+            const partFalse = `${base} WHERE NOT (${p}) ${order}`;
+            const partNull = `${base} WHERE (${p}) IS NULL ${order}`;
+
+            const counts = { memory: 0, postgres: 0 };
+            for (const [label, sql, sign] of [
+              ["full", full, -1],
+              ["true", partTrue, 1],
+              ["false", partFalse, 1],
+              ["null", partNull, 1],
+            ] as const) {
+              const memRes = await memory.query(sql);
+              const pgRes = await postgres.query(sql);
+              compareOrReport(`tlp-join-${label}`, sql, { left, right, pred }, memRes, pgRes);
+              counts.memory += sign * memRes.values.length;
+              counts.postgres += sign * pgRes.values.length;
+            }
+            for (const [engine, delta] of Object.entries(counts)) {
+              if (delta !== 0) {
+                throw new Error(`join TLP cardinality broken on ${engine}: partitions - full = ${delta}, pred=${p}`);
+              }
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(10),
+    );
+  }, 120_000);
+
+  test("aggregate partition sums add up to the total on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 3, maxLength: 20 }),
+        predicateArb,
+        async (rows, pred) => {
+          const p = predicateSql(pred);
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "t", rows);
+
+            const total = "SELECT sum(a) AS s FROM t";
+            const partTrue = `SELECT sum(a) AS s FROM t WHERE (${p})`;
+            const partFalse = `SELECT sum(a) AS s FROM t WHERE NOT (${p})`;
+            const partNull = `SELECT sum(a) AS s FROM t WHERE (${p}) IS NULL`;
+
+            const sums = { memory: 0, postgres: 0 };
+            for (const [label, sql, sign] of [
+              ["total", total, -1],
+              ["true", partTrue, 1],
+              ["false", partFalse, 1],
+              ["null", partNull, 1],
+            ] as const) {
+              const memRes = await memory.query(sql);
+              const pgRes = await postgres.query(sql);
+              compareOrReport(`tlp-agg-${label}`, sql, { rows, pred }, memRes, pgRes);
+              sums.memory += sign * Number(memRes.values[0]?.[0] ?? "0");
+              sums.postgres += sign * Number(pgRes.values[0]?.[0] ?? "0");
+            }
+            for (const [engine, delta] of Object.entries(sums)) {
+              if (delta !== 0) {
+                throw new Error(`aggregate TLP broken on ${engine}: partition sums - total = ${delta}, pred=${p}`);
+              }
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(12),
+    );
+  }, 120_000);
+});

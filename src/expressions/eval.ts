@@ -461,8 +461,10 @@ function evalIn(ctx: EngineCtx, scope: EvalScope, e: InExpr): TypedValue {
     }
   }
   let result: boolean | null;
+  // an empty set makes IN false even for a NULL needle; a NULL needle over a
+  // non-empty set yields NULL comparisons (sawNull) per element
   if (found) result = true;
-  else if (sawNull || left.v === null) result = null;
+  else if (sawNull) result = null;
   else result = false;
   if (e.not) result = result === null ? null : !result;
   return tv("bool", result);

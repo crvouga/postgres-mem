@@ -1706,6 +1706,10 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
   }));
 
   const outRows: Datum[][] = [];
+  // per emitted row, the cell types it was produced with (groups may disagree,
+  // e.g. sum() over an empty filtered group defaults to numeric while a
+  // non-empty group yields int8) — reconciled against the unified column types below
+  const outRowTypes: TypeId[][] = [];
   for (let i = 0; i < ctxs.length; i++) {
     const rc = ctxs[i]!;
     const extras = extrasFor(rc, (call) => windowMaps.get(call)?.[i]);
@@ -1759,6 +1763,7 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
       const maxLen = Math.max(0, ...srfLens);
       expansion = maxLen;
     }
+    const cellTypes = cells.map((c) => c.type);
     for (let e = 0; e < expansion; e++) {
       const row: Datum[] = [];
       for (let k = 0; k < projItems.length; k++) {
@@ -1770,6 +1775,7 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
         }
       }
       outRows.push(row);
+      outRowTypes.push(cellTypes);
     }
     // unify column types
     for (let k = 0; k < projItems.length; k++) {
@@ -1802,6 +1808,19 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
   }
   for (const c of outColumns) {
     if (c.type === UNKNOWN) c.type = "text";
+  }
+
+  // re-cast datums produced under a different per-group type than the final
+  // unified column type (sum/min/max defaults over empty groups, mixed branches)
+  for (let r = 0; r < outRows.length; r++) {
+    const types = outRowTypes[r]!;
+    for (let k = 0; k < outColumns.length; k++) {
+      const finalT = outColumns[k]!.type;
+      const cellT = types[k] ?? finalT;
+      const v = outRows[r]![k] ?? null;
+      if (v === null || cellT === finalT || cellT === UNKNOWN || finalT === UNKNOWN) continue;
+      outRows[r]![k] = castTo(ctx, tv(cellT, v), finalT, { explicit: true }).v;
+    }
   }
 
   let rel: Relation = { columns: outColumns, rows: outRows };
