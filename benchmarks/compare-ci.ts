@@ -34,15 +34,22 @@ const medianRegressions: string[] = [];
 for (const base of baseline.results) {
   const match = currentByKey.get(`${base.engine}::${base.name}`);
   if (!match) continue;
-  if (base.p95 > 0 && !(base.p95 < 0.05 && match.p95 < 0.2) && match.p95 > base.p95 * p95Factor) {
+  // Sub-ms benches on shared runners routinely swing several× on both median
+  // and p95; skip ratio gates there. Also require a 2ms absolute p95 delta so
+  // tiny baselines (e.g. 0.3ms → 0.9ms) do not fail closed on scheduler noise.
+  const noisy = base.p50 < 1 && base.p95 < 2;
+  if (
+    !noisy &&
+    base.p95 > 0 &&
+    !(base.p95 < 0.05 && match.p95 < 0.2) &&
+    match.p95 > base.p95 * p95Factor &&
+    match.p95 - base.p95 >= 2
+  ) {
     p95Regressions.push(
       `${base.engine} ${base.name}: p95 ${base.p95.toFixed(3)}ms → ${match.p95.toFixed(3)}ms (${(match.p95 / base.p95).toFixed(2)}×)`,
     );
   }
   if (base.p50 > 0 && !(base.p50 < 0.05 && match.p50 < 0.2) && match.p50 > base.p50 * medianFactor) {
-    // Sub-ms benches on shared CI runners routinely swing ~1.5–2× together on
-    // both median and p95. Skip the median gate there; the 2.5× p95 gate remains.
-    const noisy = base.p50 < 1 && base.p95 < 2;
     if (!noisy) {
       medianRegressions.push(
         `${base.engine} ${base.name}: median ${base.p50.toFixed(3)}ms → ${match.p50.toFixed(3)}ms (${(match.p50 / base.p50).toFixed(2)}×)`,

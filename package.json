@@ -4,7 +4,11 @@
   "description": "Pure TypeScript in-memory PostgreSQL implementation with zero WASM/native dependencies",
   "type": "module",
   "license": "MIT",
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/serialization/codec.ts",
+    "./src/schema/catalog-tables.ts",
+    "./src/executor/triggers-exec.ts"
+  ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
