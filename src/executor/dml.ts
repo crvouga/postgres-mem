@@ -247,7 +247,8 @@ function applyOnConflictUpdate(
   sets: UpdateSet[],
   where: Expr | null,
 ): boolean {
-  const existing = table.rows[existingIdx]!;
+  const rows = table.mutableRows();
+  const existing = rows[existingIdx]!;
   // scope: target table columns visible under its alias/name, plus excluded.*
   const cols = [
     ...table.columns.map((c) => ({ name: c.name, type: c.type.id, table: label })),
@@ -259,7 +260,7 @@ function applyOnConflictUpdate(
   const updated = existing.slice();
   applyUpdateSets(env, table, sets, scope, updated);
   computeGeneratedColumns(env, table, updated);
-  table.rows[existingIdx] = updated;
+  rows[existingIdx] = updated;
   checkNotNull(env, table, updated);
   checkChecks(env, table, updated);
   checkUnique(env, table, updated, existingIdx);
@@ -271,6 +272,7 @@ function applyOnConflictUpdate(
 export function executeInsert(env0: ExecEnv, stmt: InsertStmt): ExecResult {
   const env = applyWith(env0, stmt.with);
   const table = requireTargetTable(env, stmt.table, "insert into");
+  const rows = table.mutableRows();
   const label = stmt.alias ?? table.name;
   const colIdxs = insertTargetColumns(env, table, stmt);
   const sourceRows = insertSourceRows(env, stmt, colIdxs);
@@ -346,8 +348,8 @@ export function executeInsert(env0: ExecEnv, stmt: InsertStmt): ExecResult {
         );
         if (did) {
           insertedCount++;
-          insertedRows.push(table.rows[conflictIdx]!);
-          fireRowTriggers(env, table, "after", "update", null, table.rows[conflictIdx]!);
+          insertedRows.push(rows[conflictIdx]!);
+          fireRowTriggers(env, table, "after", "update", null, rows[conflictIdx]!);
         }
         continue;
       }
@@ -355,12 +357,12 @@ export function executeInsert(env0: ExecEnv, stmt: InsertStmt): ExecResult {
 
     checkNotNull(env, table, newRow);
     checkChecks(env, table, newRow);
-    table.rows.push(newRow);
+    rows.push(newRow);
     try {
-      checkUnique(env, table, newRow, table.rows.length - 1);
+      checkUnique(env, table, newRow, rows.length - 1);
       checkForeignKeys(env, table, newRow);
     } catch (err) {
-      table.rows.pop();
+      rows.pop();
       throw err;
     }
     insertedCount++;
@@ -453,12 +455,13 @@ export function executeUpdate(env0: ExecEnv, stmt: UpdateStmt): ExecResult {
   // FROM items build an auxiliary relation each target row can join against
   const fromSource = stmt.from.length > 0 ? buildFrom(env, stmt.from) : null;
 
+  const rows = table.mutableRows();
   const targetCols = table.columns.map((c) => ({ name: c.name, type: c.type.id, table: label }));
   const updatedRows: Datum[][] = [];
   let updateCount = 0;
 
-  for (let ri = 0; ri < table.rows.length; ri++) {
-    const oldRow = table.rows[ri]!;
+  for (let ri = 0; ri < rows.length; ri++) {
+    const oldRow = rows[ri]!;
     let matchScope: RowScope | null = null;
 
     if (fromSource) {
@@ -488,14 +491,14 @@ export function executeUpdate(env0: ExecEnv, stmt: UpdateStmt): ExecResult {
     const finalRow = fired.row;
 
     computeGeneratedColumns(env, table, finalRow);
-    table.rows[ri] = finalRow;
+    rows[ri] = finalRow;
     try {
       checkNotNull(env, table, finalRow);
       checkChecks(env, table, finalRow);
       checkUnique(env, table, finalRow, ri);
       checkForeignKeys(env, table, finalRow);
     } catch (err) {
-      table.rows[ri] = oldRow;
+      rows[ri] = oldRow;
       throw err;
     }
     handleReferencedUpdate(env, table, [oldRow], [finalRow]);
@@ -521,12 +524,13 @@ export function executeDelete(env0: ExecEnv, stmt: DeleteStmt): ExecResult {
   const table = requireTargetTable(env, stmt.table, "delete from");
   const label = stmt.alias ?? table.name;
 
+  const rows = table.mutableRows();
   const usingSource = stmt.using.length > 0 ? buildFrom(env, stmt.using) : null;
   const targetCols = table.columns.map((c) => ({ name: c.name, type: c.type.id, table: label }));
 
   const toDelete: number[] = [];
-  for (let ri = 0; ri < table.rows.length; ri++) {
-    const row = table.rows[ri]!;
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri]!;
     let matched: boolean;
     if (usingSource) {
       matched = usingSource.rel.rows.some((urow) => {
@@ -545,15 +549,15 @@ export function executeDelete(env0: ExecEnv, stmt: DeleteStmt): ExecResult {
   // delete from the end to keep indexes stable
   const skipped = new Set<number>();
   for (const ri of toDelete) {
-    const fired = fireRowTriggers(env, table, "before", "delete", table.rows[ri]!, null);
+    const fired = fireRowTriggers(env, table, "before", "delete", rows[ri]!, null);
     if (fired.row === null) skipped.add(ri);
   }
   for (let k = toDelete.length - 1; k >= 0; k--) {
     const ri = toDelete[k]!;
     if (skipped.has(ri)) continue;
-    const row = table.rows[ri]!;
+    const row = rows[ri]!;
     handleReferencedDelete(env, table, row, 0);
-    table.rows.splice(ri, 1);
+    rows.splice(ri, 1);
     deletedRows.unshift(row);
   }
   for (const row of deletedRows) {
@@ -589,8 +593,8 @@ function rowKeyFor(table: TableData, row: Datum[], columns: string[]): string | 
 function referencingRowIdxs(ref: ReturnType<typeof referencingConstraints>[number], key: string): number[] {
   const { table: rt, constraint: con } = ref;
   const out: number[] = [];
-  for (let i = 0; i < rt.rows.length; i++) {
-    const k = rowKeyFor(rt, rt.rows[i]!, con.columns);
+  for (let i = 0; i < rt.rowCount(); i++) {
+    const k = rowKeyFor(rt, rt.rowAt(i), con.columns);
     if (k === key) out.push(i);
   }
   return out;
@@ -608,22 +612,23 @@ export function handleReferencedDelete(env: ExecEnv, table: TableData, row: Datu
     if (idxs.length === 0) continue;
     const action = con.onDelete ?? "no_action";
     const child = env.ctx.state.ensureWritableTable(ref.table);
+    const childRows = child.mutableRows();
     switch (action) {
       case "cascade": {
         for (let k = idxs.length - 1; k >= 0; k--) {
-          const childRow = child.rows[idxs[k]!]!;
+          const childRow = childRows[idxs[k]!]!;
           handleReferencedDelete(env, child, childRow, depth + 1);
-          child.rows.splice(idxs[k]!, 1);
+          childRows.splice(idxs[k]!, 1);
         }
         break;
       }
       case "set_null": {
         for (const i of idxs) {
-          const newRow = child.rows[i]!.slice();
+          const newRow = childRows[i]!.slice();
           for (const c of con.columns) {
             newRow[child.columnIndex(c)] = null;
           }
-          child.rows[i] = newRow;
+          childRows[i] = newRow;
           checkNotNull(env, child, newRow);
           checkChecks(env, child, newRow);
         }
@@ -631,12 +636,12 @@ export function handleReferencedDelete(env: ExecEnv, table: TableData, row: Datu
       }
       case "set_default": {
         for (const i of idxs) {
-          const newRow = child.rows[i]!.slice();
+          const newRow = childRows[i]!.slice();
           for (const c of con.columns) {
             const ci = child.columnIndex(c);
             newRow[ci] = columnDefault(env, child, child.columns[ci]!);
           }
-          child.rows[i] = newRow;
+          childRows[i] = newRow;
           checkNotNull(env, child, newRow);
           checkChecks(env, child, newRow);
           checkForeignKeys(env, child, newRow);
@@ -664,37 +669,38 @@ export function handleReferencedUpdate(env: ExecEnv, table: TableData, oldRows: 
       if (idxs.length === 0) continue;
       const action = con.onUpdate ?? "no_action";
       const child = env.ctx.state.ensureWritableTable(ref.table);
+      const childRows = child.mutableRows();
       switch (action) {
         case "cascade": {
           for (const i of idxs) {
-            const newRow = child.rows[i]!.slice();
+            const newRow = childRows[i]!.slice();
             for (let c = 0; c < con.columns.length; c++) {
               const localIdx = child.columnIndex(con.columns[c]!);
               const refIdx = table.columnIndex(con.refColumns[c]!);
               newRow[localIdx] = newRows[r]![refIdx] ?? null;
             }
-            child.rows[i] = newRow;
+            childRows[i] = newRow;
             checkChecks(env, child, newRow);
           }
           break;
         }
         case "set_null": {
           for (const i of idxs) {
-            const newRow = child.rows[i]!.slice();
+            const newRow = childRows[i]!.slice();
             for (const c of con.columns) newRow[child.columnIndex(c)] = null;
-            child.rows[i] = newRow;
+            childRows[i] = newRow;
             checkNotNull(env, child, newRow);
           }
           break;
         }
         case "set_default": {
           for (const i of idxs) {
-            const newRow = child.rows[i]!.slice();
+            const newRow = childRows[i]!.slice();
             for (const c of con.columns) {
               const ci = child.columnIndex(c);
               newRow[ci] = columnDefault(env, child, child.columns[ci]!);
             }
-            child.rows[i] = newRow;
+            childRows[i] = newRow;
             checkForeignKeys(env, child, newRow);
           }
           break;

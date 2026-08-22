@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { Database, PostgresError, Snapshot } from "../../../src/index.ts";
-import { encodeDatabaseState } from "../../../src/serialization/codec.ts";
 import { InMemoryAdapter } from "../../adapters/in-memory.ts";
 import { expectParity } from "../../harness/assert.ts";
 import { matrixBoth } from "../../harness/matrix.ts";
@@ -172,22 +171,22 @@ test("current snapshot version round-trips with PGMM magic", () => {
   const bytes = snap.encode();
   expect(String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!)).toBe("PGMM");
   const version = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true);
-  expect(version).toBe(2);
+  expect(version).toBe(3);
   const b = snap.open();
   expect(b.query("SELECT name FROM t")).toEqual([{ name: "Ada" }]);
 });
 
-test("PGMM v1 blobs still hydrate", () => {
-  const source = new Database({ seed: 3 });
-  source.exec("CREATE TABLE t (id serial PRIMARY KEY, name text UNIQUE)");
-  source.exec("INSERT INTO t (name) VALUES ('a'), ('b')");
-  const v1 = encodeDatabaseState(source.state, { prngState: source.prng.getState(), nowMs: source.now().getTime() }, 1);
-  expect(new DataView(v1.buffer, v1.byteOffset).getUint32(4, true)).toBe(1);
-  const opened = Snapshot.decode(v1).open();
-  expect(opened.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }, { name: "b" }]);
-  expect(() => opened.exec("INSERT INTO t (name) VALUES ('a')")).toThrow(/unique/i);
-  source.close();
-  opened.close();
+test("decode rejects legacy PGMM v2 blobs", () => {
+  const legacy = new Uint8Array(8);
+  legacy.set([0x50, 0x47, 0x4d, 0x4d]); // PGMM
+  new DataView(legacy.buffer).setUint32(4, 2, true);
+  try {
+    Snapshot.decode(legacy);
+    expect.unreachable("expected decode to throw");
+  } catch (err) {
+    expect(err).toBeInstanceOf(PostgresError);
+    expect((err as PostgresError).category).toBe("snapshot_version");
+  }
 });
 
 test("all datum kinds round-trip through a snapshot", () => {
@@ -221,8 +220,10 @@ test("open isolates writes and preserves encode bytes", () => {
   const parent = new Database();
   parent.exec("CREATE TABLE t (id serial PRIMARY KEY, name text)");
   parent.exec("INSERT INTO t (name) VALUES ('a')");
-  const child = parent.snapshot().open();
-  expect([...child.snapshot().encode()]).toEqual([...parent.snapshot().encode()]);
+  const snap = parent.snapshot();
+  const bytes = snap.encode();
+  const child = snap.open();
+  expect([...child.snapshot().encode()]).toEqual([...bytes]);
   child.exec("INSERT INTO t (name) VALUES ('b')");
   expect(parent.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }]);
   expect(child.query("SELECT name FROM t ORDER BY id")).toEqual([{ name: "a" }, { name: "b" }]);

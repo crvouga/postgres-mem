@@ -487,10 +487,10 @@ export function executeCreateTableAs(env: ExecEnv, stmt: CreateTableAsStmt): Exe
   }));
   const table = new TableData(schema.name, name, columns, state.nextOid(), stmt.temp);
   if (stmt.withData) {
-    table.rows = rel.rows.map((r) => r.slice());
+    for (const row of rel.rows) table.mutableRows().push(row.slice());
   }
   schema.tables.set(name, table);
-  const count = stmt.withData ? table.rows.length : 0;
+  const count = stmt.withData ? table.rowCount() : 0;
   return { columns: [], rows: [], command: `SELECT ${count}`, rowCount: count };
 }
 
@@ -539,8 +539,8 @@ export function executeCreateIndex(env: ExecEnv, stmt: CreateIndexStmt): ExecRes
   // unique index: validate existing rows
   if (stmt.unique) {
     try {
-      for (let i = 0; i < table.rows.length; i++) {
-        checkUnique(env, table, table.rows[i]!, i);
+      for (let i = 0; i < table.rowCount(); i++) {
+        checkUnique(env, table, table.rowAt(i), i);
       }
     } catch (err) {
       schema.indexes.delete(name);
@@ -806,6 +806,7 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
   const schema = state.getSchema(table.schema);
 
   for (const action of stmt.actions) {
+    const rows = table.mutableRows();
     switch (action.kind) {
       case "add_column": {
         if (table.columnIndex(action.column.name) !== -1) {
@@ -823,8 +824,8 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
         table.columns.push(col);
         table.constraints.push(...built.constraints);
         // fill the new column for existing rows
-        for (let i = 0; i < table.rows.length; i++) {
-          const row = table.rows[i]!;
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i]!;
           let v: Datum = null;
           if (col.identity) {
             const seq = state.findSequence(col.identity.sequence.split("."));
@@ -838,14 +839,14 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
           row.push(v);
         }
         if (col.generated) {
-          for (const row of table.rows) {
+          for (const row of rows) {
             const idx = table.columnIndex(col.name);
             const scope = tableScopeFor(env, table, row);
             row[idx] = castTo(env.ctx, evalScalar(env, scope, col.generated), col.type.id, { assignment: true }).v;
           }
         }
         if (col.notNull) {
-          for (const row of table.rows) {
+          for (const row of rows) {
             if ((row[table.columnIndex(col.name)] ?? null) === null) {
               throw pgError(
                 "not_null_violation",
@@ -893,7 +894,7 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
           return true;
         });
         table.columns.splice(idx, 1);
-        for (const row of table.rows) row.splice(idx, 1);
+        for (const row of rows) row.splice(idx, 1);
         // drop indexes referencing the column
         for (const [iname, idxMeta] of [...schema.indexes]) {
           if (idxMeta.table === table.name && idxMeta.columns.some((c) => c.column === action.name)) {
@@ -913,8 +914,8 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
         }
         const resolved = resolveTypeName(state, action.typeName);
         const col = table.columns[idx]!;
-        for (let i = 0; i < table.rows.length; i++) {
-          const row = table.rows[i]!;
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i]!;
           const old = row[idx] ?? null;
           let nv: Datum;
           if (action.using) {
@@ -934,7 +935,7 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
           }
           const next = row.slice();
           next[idx] = nv;
-          table.rows[i] = next;
+          rows[i] = next;
         }
         col.type = resolved.column;
         col.domain = resolved.domain;
@@ -973,7 +974,7 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
             "42703",
           );
         }
-        for (const row of table.rows) {
+        for (const row of rows) {
           if ((row[idx] ?? null) === null) {
             throw pgError(
               "not_null_violation",
@@ -1010,7 +1011,7 @@ export function executeAlterTable(env: ExecEnv, stmt: AlterTableStmt): ExecResul
           }
           for (const cn of con.columns) {
             const col = table.columns[table.columnIndex(cn)]!;
-            for (const row of table.rows) {
+            for (const row of rows) {
               if ((row[table.columnIndex(cn)] ?? null) === null) {
                 throw pgError(
                   "not_null_violation",
@@ -1210,8 +1211,8 @@ function seqNext(env: ExecEnv, seq: SequenceData): bigint {
 
 function validateConstraint(env: ExecEnv, table: TableData, con: ConstraintMeta): void {
   void con;
-  for (let i = 0; i < table.rows.length; i++) {
-    const row = table.rows[i]!;
+  for (let i = 0; i < table.rowCount(); i++) {
+    const row = table.rowAt(i);
     checkChecks(env, table, row);
     checkUnique(env, table, row, i);
     checkForeignKeys(env, table, row);
@@ -1478,7 +1479,7 @@ export function executeTruncate(env: ExecEnv, stmt: TruncateStmt): ExecResult {
   } else {
     for (const t of set) {
       for (const r of referencingConstraints(env, t)) {
-        if (!set.has(r.table) && r.table.rows.length >= 0) {
+        if (!set.has(r.table) && r.table.rowCount() >= 0) {
           throw pgError(
             "feature_not_supported",
             `cannot truncate a table referenced in a foreign key constraint`,
@@ -1490,7 +1491,7 @@ export function executeTruncate(env: ExecEnv, stmt: TruncateStmt): ExecResult {
   }
   for (const t of set) {
     const writable = state.ensureWritableTable(t);
-    writable.rows = [];
+    writable.mutableRows().length = 0;
     if (stmt.restartIdentity) {
       const schema = state.getSchema(writable.schema);
       for (const seq of [...schema.sequences.values()]) {

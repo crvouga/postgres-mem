@@ -139,7 +139,7 @@ function pgClass(ctx: EngineCtx): Relation {
       const hasIndex =
         t.constraints.some((c) => c.kind === "primary_key" || c.kind === "unique") ||
         [...schemaData.indexes.values()].some((i) => i.table === t.name);
-      push(t.oid, t.name, t.schema, "r", t.columns.length, t.rows.length, hasIndex, true, t.temp);
+      push(t.oid, t.name, t.schema, "r", t.columns.length, t.rowCount(), hasIndex, true, t.temp);
     }
     for (const v of schemaData.views.values()) {
       push(

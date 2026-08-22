@@ -268,7 +268,7 @@ export function executeCopy(env: ExecEnv, stmt: CopyStmt): ExecResult {
           })
         : table.columns.map((_, i) => i);
       columns = idxs.map((i) => ({ name: table.columns[i]!.name, type: table.columns[i]!.type.id }));
-      rows = table.rows.map((r) => idxs.map((i) => r[i] ?? null));
+      rows = Array.from({ length: table.rowCount() }, (_, i) => idxs.map((j) => table.rowAt(i)[j] ?? null));
     }
     const delim = format === "csv" ? "," : "\t";
     const nullStr = String(stmt.options.null ?? (format === "csv" ? "" : "\\N"));

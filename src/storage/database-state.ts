@@ -3,6 +3,7 @@ import { pgError } from "../errors/error.ts";
 import type { Clock } from "../runtime/clock.ts";
 import type { Prng } from "../runtime/prng.ts";
 import { PG_CATALOG_RELATIONS } from "../schema/catalog.ts";
+import type { ColumnarSlab } from "./columnar-slab.ts";
 import { type ColumnType, type Datum, TYPE_OIDS, type TypeId, typeDisplayName } from "../types/value.ts";
 
 // --- table / relation metadata ---------------------------------------------
@@ -64,6 +65,8 @@ export class TableData {
   schema: string;
   columns: ColumnMeta[];
   rows: Datum[][];
+  /** Frozen columnar storage after snapshot hydrate; `rows` stays empty until materialized. */
+  slab: ColumnarSlab | null = null;
   constraints: ConstraintMeta[];
   triggers: TriggerMeta[];
   temp: boolean;
@@ -81,6 +84,38 @@ export class TableData {
     this.triggers = [];
     this.temp = temp;
     this.oid = oid;
+  }
+
+  rowCount(): number {
+    return this.slab ? this.slab.rowCount : this.rows.length;
+  }
+
+  rowAt(index: number): Datum[] {
+    if (this.slab) return this.slab.rowAt(index);
+    return this.rows[index] ?? [];
+  }
+
+  /** All rows for read-only scans (copies slab rows). */
+  allRows(): Datum[][] {
+    if (this.slab) return this.slab.materialize();
+    return this.rows;
+  }
+
+  attachSlab(slab: ColumnarSlab): void {
+    this.slab = slab;
+    this.rows = [];
+  }
+
+  materializeSlab(): void {
+    if (!this.slab) return;
+    this.rows = this.slab.materialize();
+    this.slab = null;
+  }
+
+  /** Writable row storage; materializes slab if needed. */
+  mutableRows(): Datum[][] {
+    this.materializeSlab();
+    return this.rows;
   }
 
   get frozen(): boolean {
@@ -107,7 +142,11 @@ export class TableData {
       this.oid,
       this.temp,
     );
-    t.rows = this.rows.map((r) => r.slice());
+    if (this.slab) {
+      t.rows = this.slab.materialize().map((r) => r.slice());
+    } else {
+      t.rows = this.rows.map((r) => r.slice());
+    }
     t.constraints = this.constraints.map((c) => ({ ...c }));
     t.triggers = this.triggers.map((tr) => ({ ...tr }));
     return t;
@@ -115,7 +154,9 @@ export class TableData {
 
   /** Independent writable copy (row tuples copied so ALTER COLUMN is isolated). */
   cloneForWrite(): TableData {
-    return this.clone();
+    const t = this.clone();
+    t.materializeSlab();
+    return t;
   }
 }
 

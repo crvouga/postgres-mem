@@ -141,9 +141,9 @@ export function checkUnique(env: ExecEnv, table: TableData, row: Datum[], selfId
   for (const spec of uniqueSpecsFor(env, table)) {
     const key = uniqueKeyOf(env, table, spec, row);
     if (key === null) continue;
-    for (let i = 0; i < table.rows.length; i++) {
+    for (let i = 0; i < table.rowCount(); i++) {
       if (i === selfIdx) continue;
-      const other = uniqueKeyOf(env, table, spec, table.rows[i]!);
+      const other = uniqueKeyOf(env, table, spec, table.rowAt(i));
       if (other === key) {
         throw pgError(
           "constraint_unique",
@@ -160,8 +160,8 @@ export function checkUnique(env: ExecEnv, table: TableData, row: Datum[], selfId
 export function findConflict(env: ExecEnv, table: TableData, spec: UniqueSpec, row: Datum[]): number | null {
   const key = uniqueKeyOf(env, table, spec, row);
   if (key === null) return null;
-  for (let i = 0; i < table.rows.length; i++) {
-    const other = uniqueKeyOf(env, table, spec, table.rows[i]!);
+  for (let i = 0; i < table.rowCount(); i++) {
+    const other = uniqueKeyOf(env, table, spec, table.rowAt(i));
     if (other === key) return i;
   }
   return null;
@@ -204,15 +204,20 @@ export function checkForeignKeys(env: ExecEnv, table: TableData, row: Datum[]): 
         return cast.v === null ? "\u0000N" : datumKey(keyTypes[i]!, cast.v);
       })
       .join("\u0001");
-    const found = refTable.rows.some((r) => {
+    let found = false;
+    for (let i = 0; i < refTable.rowCount(); i++) {
+      const r = refTable.rowAt(i);
       const key = refIdxs
-        .map((ri, i) => {
+        .map((ri, j) => {
           const v = r[ri] ?? null;
-          return v === null ? "\u0000N" : datumKey(keyTypes[i]!, v);
+          return v === null ? "\u0000N" : datumKey(keyTypes[j]!, v);
         })
         .join("\u0001");
-      return key === wanted;
-    });
+      if (key === wanted) {
+        found = true;
+        break;
+      }
+    }
     if (!found) {
       throw pgError(
         "constraint_foreign_key",

@@ -458,7 +458,7 @@ function materializeItem(env: ExecEnv, item: FromItem, scope: RowScope | null): 
       if (table) {
         const rel: Relation = {
           columns: table.columns.map((c) => ({ name: c.name, type: c.type.id, table: label })),
-          rows: table.rows,
+          rows: table.allRows(),
         };
         return { rel: renameWithAliases(rel, label, item.colAliases, label), rangeVars: new Set([label]) };
       }

@@ -94,7 +94,7 @@ runCatalog(SNP_SECTION, [
     fn: (db) => {
       const snap = db.snapshot().encode();
       expect(String.fromCharCode(snap[0]!, snap[1]!, snap[2]!, snap[3]!)).toBe("PGMM");
-      expect(new DataView(snap.buffer, snap.byteOffset).getUint32(4, true)).toBe(2);
+      expect(new DataView(snap.buffer, snap.byteOffset).getUint32(4, true)).toBe(3);
     },
   },
   {
