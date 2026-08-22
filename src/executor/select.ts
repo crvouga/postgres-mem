@@ -456,9 +456,10 @@ function materializeItem(env: ExecEnv, item: FromItem, scope: RowScope | null): 
       const state = env.ctx.state;
       const table = state.findTable(item.name);
       if (table) {
+        table.materializeSlab();
         const rel: Relation = {
           columns: table.columns.map((c) => ({ name: c.name, type: c.type.id, table: label })),
-          rows: table.allRows(),
+          rows: table.rows,
         };
         return { rel: renameWithAliases(rel, label, item.colAliases, label), rangeVars: new Set([label]) };
       }

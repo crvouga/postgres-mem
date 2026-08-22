@@ -95,9 +95,9 @@ export class TableData {
     return this.rows[index] ?? [];
   }
 
-  /** All rows for read-only scans (copies slab rows). */
+  /** All rows for scans; materializes slab once into `rows` when needed. */
   allRows(): Datum[][] {
-    if (this.slab) return this.slab.materialize();
+    this.materializeSlab();
     return this.rows;
   }
 

@@ -106,8 +106,8 @@ export function snapshotSpecs(): BenchSpec[] {
         tiers: target.tiers,
         engines: "mem",
         layer: "engine",
-        warmup: 0,
-        iterations: 1,
+        warmup: target.rows >= 25_000 ? 0 : 1,
+        iterations: target.rows >= 25_000 ? 1 : 3,
         setup: async (engine) => {
           await populateSnapshotDb(engine, target.rows, target.payloadBytes);
         },
