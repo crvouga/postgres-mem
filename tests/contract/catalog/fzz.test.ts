@@ -48,6 +48,42 @@ runCatalog(FZZ_SECTION, [
     kind: "divergence",
     fn: () => expect(fuzzAssertConfig(3).numRuns === 3 || fuzzPath() !== undefined).toBe(true),
   },
+  {
+    id: "FZZ-snap-01",
+    kind: "divergence",
+    fn: () => expect(fuzzAssertConfig(12).endOnFailure).toBe(true),
+  },
+  {
+    id: "FZZ-snap-02",
+    kind: "divergence",
+    fn: (db) => {
+      db.exec("CREATE TABLE t (id serial PRIMARY KEY, a int)");
+      db.exec("CREATE VIEW v AS SELECT id, a FROM t");
+      db.exec("INSERT INTO t (a) VALUES (1)");
+      const snap = db.snapshot();
+      const wiped = snap.open();
+      wiped.exec("DELETE FROM t");
+      const restored = snap.open();
+      expect(restored.query("SELECT id, a FROM v")).toEqual([{ id: 1, a: 1 }]);
+      wiped.close();
+      restored.close();
+    },
+  },
+  {
+    id: "FZZ-snap-03",
+    kind: "divergence",
+    fn: (db) => {
+      db.exec("CREATE SEQUENCE sq START 10");
+      db.query("SELECT nextval('sq')");
+      const snap = db.snapshot();
+      const wiped = snap.open();
+      wiped.query("SELECT setval('sq', 1)");
+      const restored = snap.open();
+      expect(restored.query("SELECT nextval('sq') AS n")[0]).toEqual({ n: 11n });
+      wiped.close();
+      restored.close();
+    },
+  },
   { id: "FZZ-robust-01", kind: "divergence", fn: () => expect(typeof fuzzSeed()).toBe("number") },
   {
     id: "FZZ-corpus-01",

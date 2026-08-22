@@ -6,11 +6,16 @@
     "datestyle",
     "intervalstyle",
     "isready",
+    "matview",
+    "matviewname",
+    "matviews",
     "nspname",
     "pglite",
     "PGTZ",
     "SAVEPOINT",
     "savepoints",
+    "schemaname",
+    "sequencename",
     "sqlstate",
     "tsearch"
   ]

@@ -2,13 +2,35 @@ import * as fc from "fast-check";
 import { intArb, realArb, textArb } from "../config.ts";
 import { sqlLiteral } from "../helpers.ts";
 
-export type SchemaKind = "default" | "simple";
+export type SchemaKind = "default" | "simple" | "with_view" | "with_matview" | "with_sequence" | "multi_schema";
 
 export const DEFAULT_SCHEMA = "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8)";
 export const SIMPLE_SCHEMA = "CREATE TABLE t (id int PRIMARY KEY, a int, b text)";
 
 export function schemaFor(kind: SchemaKind): string {
-  return kind === "simple" ? SIMPLE_SCHEMA : DEFAULT_SCHEMA;
+  if (kind === "simple") return SIMPLE_SCHEMA;
+  if (kind === "with_view") {
+    return (
+      "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8); " + "CREATE VIEW t_view AS SELECT id, a FROM t"
+    );
+  }
+  if (kind === "with_matview") {
+    return (
+      "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8); " +
+      "CREATE MATERIALIZED VIEW t_mv AS SELECT id, a FROM t"
+    );
+  }
+  if (kind === "with_sequence") {
+    return "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8)";
+  }
+  if (kind === "multi_schema") {
+    return (
+      "CREATE SCHEMA other; " +
+      "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8); " +
+      "CREATE TABLE other.t (id int PRIMARY KEY, a int)"
+    );
+  }
+  return DEFAULT_SCHEMA;
 }
 
 /**
@@ -37,7 +59,12 @@ export type MixedOp =
   | StatefulOp
   | { kind: "add_column"; def: string }
   | { kind: "create_index" }
-  | { kind: "drop_index" };
+  | { kind: "drop_index" }
+  | { kind: "create_view" }
+  | { kind: "drop_view" }
+  | { kind: "create_matview" }
+  | { kind: "refresh_matview" }
+  | { kind: "create_partial_index" };
 
 interface SavepointFrame {
   name: string;
@@ -60,8 +87,14 @@ export interface SimState {
   nextSavepoint: number;
   hasNote: boolean;
   hasIndex: boolean;
+  hasPartialIndex: boolean;
+  hasView: boolean;
+  hasMatView: boolean;
+  hasSequence: boolean;
   /** Applied SQL statements (checkpoint context / repro emission). */
   sqlLog: string[];
+  /** SELECT probes executed during the sequence (for snapshot checkpoint verification). */
+  probeQueries: string[];
 }
 
 export function initialSimState(schemaKind: SchemaKind = "default"): SimState {
@@ -75,7 +108,12 @@ export function initialSimState(schemaKind: SchemaKind = "default"): SimState {
     nextSavepoint: 1,
     hasNote: false,
     hasIndex: false,
+    hasPartialIndex: false,
+    hasView: schemaKind === "with_view",
+    hasMatView: schemaKind === "with_matview",
+    hasSequence: schemaKind === "with_sequence" || schemaKind === "default",
     sqlLog: [],
+    probeQueries: [],
   };
 }
 
@@ -90,9 +128,16 @@ export const OUTCOME_KINDS = new Set<MixedOp["kind"]>([
   "add_column",
   "create_index",
   "drop_index",
+  "create_view",
+  "drop_view",
+  "create_matview",
+  "refresh_matview",
+  "create_partial_index",
 ]);
 
-export const QUERY_KINDS = new Set<MixedOp["kind"]>(["select_scan", "select_agg"]);
+export const READ_ONLY_QUERY_KINDS = new Set<MixedOp["kind"]>(["select_scan", "select_agg"]);
+
+export const QUERY_KINDS = READ_ONLY_QUERY_KINDS;
 
 function scanColumns(state: SimState): string[] {
   const cols = ["id", "a", "b"];
@@ -215,6 +260,30 @@ export function resolveOp(op: MixedOp, state: SimState): ResolvedOp | null {
     state.hasIndex = false;
     return { sql: "DROP INDEX t_a_idx", isQuery: false };
   }
+  if (op.kind === "create_view") {
+    if (state.hasView || state.inTxn || state.schemaKind === "multi_schema") return null;
+    state.hasView = true;
+    return { sql: "CREATE VIEW t_view AS SELECT id, a FROM t", isQuery: false };
+  }
+  if (op.kind === "drop_view") {
+    if (!state.hasView || state.inTxn) return null;
+    state.hasView = false;
+    return { sql: "DROP VIEW t_view", isQuery: false };
+  }
+  if (op.kind === "create_matview") {
+    if (state.hasMatView || state.inTxn || state.schemaKind === "multi_schema") return null;
+    state.hasMatView = true;
+    return { sql: "CREATE MATERIALIZED VIEW t_mv AS SELECT id, a FROM t", isQuery: false };
+  }
+  if (op.kind === "refresh_matview") {
+    if (!state.hasMatView || state.inTxn) return null;
+    return { sql: "REFRESH MATERIALIZED VIEW t_mv", isQuery: false };
+  }
+  if (op.kind === "create_partial_index") {
+    if (state.hasPartialIndex || state.inTxn || state.schemaKind === "multi_schema") return null;
+    state.hasPartialIndex = true;
+    return { sql: "CREATE INDEX t_partial_idx ON t (a) WHERE a > 0", isQuery: false };
+  }
   if (op.kind === "checkpoint") {
     return { sql: "<checkpoint>", isQuery: false };
   }
@@ -272,6 +341,19 @@ export const mixedOpArb: fc.Arbitrary<MixedOp> = fc.oneof(
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("add_column" as const), def: textArb }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_index" as const) }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("drop_index" as const) }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_view" as const) }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("drop_view" as const) }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_matview" as const) }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("refresh_matview" as const) }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_partial_index" as const) }) },
+  { weight: 4, arbitrary: fc.record({ kind: fc.constant("checkpoint" as const) }) },
 );
 
-export const schemaKindArb: fc.Arbitrary<SchemaKind> = fc.constantFrom("default", "simple");
+export const schemaKindArb: fc.Arbitrary<SchemaKind> = fc.constantFrom(
+  "default",
+  "simple",
+  "with_view",
+  "with_matview",
+  "with_sequence",
+  "multi_schema",
+);

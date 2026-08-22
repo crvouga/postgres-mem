@@ -7,12 +7,14 @@ import {
   compareWriteOrReport,
   withDatabases,
 } from "../helpers.ts";
+import { assertProbeResultsEqual, captureProbeResults, probesForState } from "../snapshot-helpers.ts";
 import { minimizeOps } from "./minimize.ts";
 import {
   initialSimState,
   type MixedOp,
   OUTCOME_KINDS,
   QUERY_KINDS,
+  READ_ONLY_QUERY_KINDS,
   resolveOp,
   type SchemaKind,
   type SimState,
@@ -59,9 +61,18 @@ async function runCheckpoint(
   postgres: ContractDb,
   state: SimState,
 ): Promise<void> {
+  const probes = probesForState(state);
+  const before = await captureProbeResults(memory, probes);
+
   const snap = memory.snapshot();
+  if (state.hasIndex) {
+    await memory.exec("DROP INDEX IF EXISTS t_a_idx");
+  }
   await memory.exec("DELETE FROM t");
   memory.restore(snap);
+
+  const after = await captureProbeResults(memory, probes);
+  assertProbeResultsEqual(`${label}-checkpoint-probes-${index}`, before, after);
   await compareStateOrReport(`${label}-checkpoint-${index}`, { op, index, sqlLog: state.sqlLog }, memory, postgres);
 }
 
@@ -105,15 +116,11 @@ export async function runSequence(ops: readonly MixedOp[], options: RunSequenceO
         if (dump) await compareStateOrReport(`${label}-begin-dump-${index}`, op, memory, postgres);
       }
 
-      await applyResolved(
-        label,
-        index,
-        op,
-        resolved.sql,
-        resolved.isQuery || QUERY_KINDS.has(op.kind),
-        memory,
-        postgres,
-      );
+      const isQuery = resolved.isQuery || QUERY_KINDS.has(op.kind);
+      if (READ_ONLY_QUERY_KINDS.has(op.kind)) {
+        state.probeQueries.push(resolved.sql);
+      }
+      await applyResolved(label, index, op, resolved.sql, isQuery, memory, postgres);
       if (!resolved.isQuery) state.sqlLog.push(resolved.sql);
       if (dump) await compareStateOrReport(`${label}-dump-${index}`, { op, index }, memory, postgres);
     }

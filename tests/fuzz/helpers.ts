@@ -1,6 +1,7 @@
 import { InMemoryAdapter } from "../adapters/in-memory.ts";
 import { deepCompareResults } from "../harness/normalize.ts";
 import { createOracleAdapter } from "../harness/oracle.ts";
+import { dumpLogicalState } from "../harness/state-dump.ts";
 import type { ContractDb, QueryResult, SqlValue } from "../harness/types.ts";
 import { fuzzSeed } from "./config.ts";
 
@@ -92,35 +93,6 @@ export function compareWriteOrReport(
     return;
   }
   compareOutcomeOrReport(label, sql, setup, memory, postgres);
-}
-
-const STATE_TABLES_SQL =
-  "SELECT table_schema, table_name FROM information_schema.tables " +
-  "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') AND table_type = 'BASE TABLE' " +
-  "ORDER BY table_schema, table_name";
-
-/** Dump every user table (rows text-rendered, ordered) as one comparable result. */
-export async function dumpLogicalState(db: ContractDb): Promise<QueryResult> {
-  const tables = await db.query(STATE_TABLES_SQL);
-  if (!tables.ok) return tables;
-  const chunks: string[] = [];
-  for (const row of tables.values) {
-    const schema = row[0]!;
-    const name = row[1]!;
-    const cols = await db.query(
-      "SELECT column_name FROM information_schema.columns " +
-        `WHERE table_schema = '${schema}' AND table_name = '${name}' ORDER BY ordinal_position`,
-    );
-    if (!cols.ok) return cols;
-    const colList = cols.values.map((r) => quoteIdent(r[0]!));
-    if (colList.length === 0) continue;
-    const rendered = colList.map((c) => `coalesce(${c}::text, '<NULL>')`).join(" || '|' || ");
-    chunks.push(
-      `SELECT '${schema}.${name}' AS tbl, s FROM (SELECT ${rendered} AS s FROM ${quoteIdent(schema)}.${quoteIdent(name)} ORDER BY 1) x`,
-    );
-  }
-  if (chunks.length === 0) return db.query("SELECT NULL::text AS tbl, NULL::text AS s WHERE false");
-  return db.query(chunks.join(" UNION ALL "));
 }
 
 export async function compareStateOrReport(
