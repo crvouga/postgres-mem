@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../sqlite-mem"
+		},
+		{
+			"name": "postgres-mem",
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}

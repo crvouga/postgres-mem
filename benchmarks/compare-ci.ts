@@ -1,5 +1,5 @@
 import path from "node:path";
-import { RELIABLE_PERCENTILE_MIN_SAMPLES, type BenchReport, type BenchResult } from "./harness/types.ts";
+import { type BenchReport, type BenchResult, RELIABLE_PERCENTILE_MIN_SAMPLES } from "./harness/types.ts";
 
 const root = path.resolve(import.meta.dir);
 const baselinePath = process.argv[2] ?? path.join(root, "results/ci-baseline.json");
@@ -39,8 +39,8 @@ const medianRegressions: string[] = [];
 for (const base of baseline.results) {
   const match = currentByKey.get(`${base.engine}::${base.name}`);
   if (!match) continue;
-  // n<5: p50/p95 are one sample (insert benches). Ratio gates flake; absolute
-  // budgets in check-budgets.ts still catch blowups.
+  // n<5: p50/p95 are one sample (insert benches). Ratio gates flake; linux CI
+  // absolute budgets in check-budgets.ts still catch blowups.
   const unreliable = unreliablePercentiles(base) || unreliablePercentiles(match);
   // Sub-ms: skip both ratio gates. Few-ms micros (insert ~6ms, subquery ~3ms)
   // routinely 1.5–2× on shared GHA; skip median, keep 2.5× p95.
