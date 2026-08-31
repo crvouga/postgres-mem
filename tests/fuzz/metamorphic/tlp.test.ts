@@ -20,6 +20,7 @@ const predicateArb = fc.oneof(
   fc.record({ kind: fc.constant("eq" as const), n: intArb }),
   fc.record({ kind: fc.constant("isnull" as const) }),
   fc.record({ kind: fc.constant("like" as const), p: fc.constantFrom("%", "a%", "%z", "_", "%b%") }),
+  fc.record({ kind: fc.constant("numgt" as const), n: intArb }),
 );
 
 type Predicate = fc.InferValue<typeof predicateArb>;
@@ -32,6 +33,7 @@ function predicateSql(pred: Predicate, prefix = ""): string {
   if (pred.kind === "lt") return `${a} < ${pred.n}`;
   if (pred.kind === "eq") return `${a} = ${pred.n}`;
   if (pred.kind === "isnull") return `${a} IS NULL`;
+  if (pred.kind === "numgt") return `${a}::numeric > ${pred.n}::numeric`;
   return `${b} LIKE ${sqlLiteral(pred.p)}`;
 }
 

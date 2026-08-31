@@ -105,6 +105,23 @@ describe("json/array differential fuzz", () => {
     );
   }, 120_000);
 
+  test("jsonb compare and ORDER BY match postgres", async () => {
+    const numArb = fc.oneof(
+      intArb,
+      fc.integer({ min: 1, max: 999999999999999 }).map((n) => `${n}.${n % 10}`),
+    );
+    await fc.assert(
+      fc.asyncProperty(fc.array(numArb, { minLength: 2, maxLength: 5 }), async (nums) => {
+        const values = nums.map((n) => `('${n}'::jsonb)`).join(", ");
+        const sql = `SELECT v FROM (VALUES ${values}) t(v) ORDER BY v`;
+        await withDatabases(async (memory, postgres) => {
+          compareOrReport("jsonb-order", sql, { nums }, await memory.query(sql), await postgres.query(sql));
+        });
+      }),
+      fuzzAssertConfig(25),
+    );
+  }, 120_000);
+
   test("int arrays: subscripting, array_length, unnest, || and @>", async () => {
     const intsArb = fc.array(intArb, { minLength: 1, maxLength: 6 });
     await fc.assert(

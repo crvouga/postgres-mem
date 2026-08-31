@@ -2,7 +2,16 @@ import * as fc from "fast-check";
 import { intArb, realArb, textArb } from "../config.ts";
 import { sqlLiteral } from "../helpers.ts";
 
-export type SchemaKind = "default" | "simple" | "with_view" | "with_matview" | "with_sequence" | "multi_schema";
+export type SchemaKind =
+  | "default"
+  | "simple"
+  | "with_view"
+  | "with_matview"
+  | "with_sequence"
+  | "multi_schema"
+  | "with_jsonb"
+  | "with_numeric"
+  | "with_array";
 
 export const DEFAULT_SCHEMA = "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8)";
 export const SIMPLE_SCHEMA = "CREATE TABLE t (id int PRIMARY KEY, a int, b text)";
@@ -29,6 +38,15 @@ export function schemaFor(kind: SchemaKind): string {
       "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, c float8); " +
       "CREATE TABLE other.t (id int PRIMARY KEY, a int)"
     );
+  }
+  if (kind === "with_jsonb") {
+    return "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, j jsonb)";
+  }
+  if (kind === "with_numeric") {
+    return "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, n numeric)";
+  }
+  if (kind === "with_array") {
+    return "CREATE TABLE t (id serial PRIMARY KEY, a int, b text, arr int[])";
   }
   return DEFAULT_SCHEMA;
 }
@@ -163,6 +181,26 @@ export function resolveOp(op: MixedOp, state: SimState): ResolvedOp | null {
   if (op.kind === "insert") {
     const id = state.nextId++;
     state.liveIds.push(id);
+    if (state.schemaKind === "with_jsonb") {
+      const doc = JSON.stringify({ a: op.a, b: op.b });
+      return {
+        sql: `INSERT INTO t (id, a, b, j) VALUES (${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${sqlLiteral(doc)}::jsonb)`,
+        isQuery: false,
+      };
+    }
+    if (state.schemaKind === "with_numeric") {
+      return {
+        sql: `INSERT INTO t (id, a, b, n) VALUES (${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${sqlLiteral(op.a)}::numeric)`,
+        isQuery: false,
+      };
+    }
+    if (state.schemaKind === "with_array") {
+      const arr = op.a === null ? "NULL" : `ARRAY[${sqlLiteral(op.a)}]`;
+      return {
+        sql: `INSERT INTO t (id, a, b, arr) VALUES (${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${arr})`,
+        isQuery: false,
+      };
+    }
     if (state.schemaKind === "default") {
       return {
         sql: `INSERT INTO t (id, a, b, c) VALUES (${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${sqlLiteral(op.c)})`,
@@ -356,4 +394,7 @@ export const schemaKindArb: fc.Arbitrary<SchemaKind> = fc.constantFrom(
   "with_matview",
   "with_sequence",
   "multi_schema",
+  "with_jsonb",
+  "with_numeric",
+  "with_array",
 );

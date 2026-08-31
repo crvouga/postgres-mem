@@ -31,6 +31,8 @@ const rows: ScenarioRow[] = [
   ["snap-03", "extended logical dump (views/matviews/sequences)", F, undefined, ["tests/harness/state-dump.ts"]],
   ["robust-01", "PostgresError-only / snapshot bit-flip robustness", F, undefined, ["tests/fuzz/robustness.test.ts"]],
   ["corpus-01", "corpus regression replay", F, undefined, ["tests/fuzz/corpus.test.ts"]],
+  ["num-01", "numeric arithmetic differential fuzz", F, undefined, ["tests/fuzz/numeric.test.ts"]],
+  ["cpy-01", "COPY FROM STDIN differential fuzz", F, undefined, ["tests/fuzz/copy.test.ts"]],
   ["seed-01", "default seed 0x5a17e0e1", P, undefined, ["tests/fuzz/config.ts"]],
   ["replay-01", "POSTGRES_MEM_FUZZ_SEED / PATH replay", P, undefined, ["tests/fuzz/config.ts"]],
   ["min-01", "DST minimizer and repro script", P, undefined, ["tests/fuzz/dst/minimize.ts"]],

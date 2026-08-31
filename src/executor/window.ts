@@ -142,6 +142,10 @@ function computePartition(
 
   // 3. window aggregate over frames
   const frame = spec.frame ?? defaultFrame(spec);
+  if (!call.filter && (name === "sum" || name === "count") && isRunningRowsFrame(frame, spec)) {
+    computeRunningAgg(ctx, call, name, rowIdxs, evalAt, results);
+    return;
+  }
   for (let pos = 0; pos < n; pos++) {
     const [lo, hi] = frameBounds(ctx, frame, pos, rowIdxs, peerGroup, keys, spec, evalAt);
     const included: number[] = [];
@@ -194,6 +198,39 @@ function defaultFrame(spec: WindowSpec): FrameSpec {
     end: spec.orderBy.length > 0 ? { kind: "current_row" } : { kind: "unbounded_following" },
     exclusion: null,
   };
+}
+
+function isRunningRowsFrame(frame: FrameSpec, spec: WindowSpec): boolean {
+  if (frame.exclusion) return false;
+  if (frame.mode !== "rows") return false;
+  if (frame.start.kind !== "unbounded_preceding") return false;
+  const end =
+    frame.end ??
+    (spec.orderBy.length > 0 ? { kind: "current_row" as const } : { kind: "unbounded_following" as const });
+  return end.kind === "current_row";
+}
+
+function computeRunningAgg(
+  ctx: EngineCtx,
+  call: FuncCall,
+  name: string,
+  rowIdxs: number[],
+  evalAt: RowEval,
+  results: TypedValue[],
+): void {
+  const argTypes: TypeId[] = call.args.map((_, ai) => {
+    for (const rowIdx of rowIdxs) {
+      const v = evalAt(rowIdx, call.args[ai]!);
+      if (v.t !== UNKNOWN) return v.t;
+    }
+    return UNKNOWN;
+  });
+  const acc = createAggregate(ctx, name, argTypes);
+  for (const rowIdx of rowIdxs) {
+    const argRows = call.star ? [] : call.args.map((a) => evalAt(rowIdx, a));
+    acc.step(argRows);
+    results[rowIdx] = acc.result();
+  }
 }
 
 function excluded(frame: FrameSpec, pos: number, current: number, peerGroup: number[]): boolean {

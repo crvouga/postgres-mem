@@ -394,8 +394,9 @@ export function parseFloatText(text: string, type: "float4" | "float8"): number 
       throw pgError("numeric_value_out_of_range", `"${text}" is out of range for type real`);
     }
   }
-  if (v === 0) v = 0; // canonicalize -0 from parse? PG keeps -0 for floats
-  return Number(t) === 0 && t.startsWith("-") ? -0 : v;
+  // PG keeps -0 for float literals (e.g. '-0.0'::float8).
+  if (Number(t) === 0 && t.startsWith("-")) return -0;
+  return v;
 }
 
 // --- integers --------------------------------------------------------------

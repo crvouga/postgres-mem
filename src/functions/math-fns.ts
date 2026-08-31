@@ -102,7 +102,7 @@ export function getMathFunctions(): Map<string, ScalarFn> {
           // PG float round: round-half-away-from-zero
           const f = argFloat(ctx, a);
           const r = f >= 0 ? Math.round(f) : -Math.round(-f);
-          return tv("float8", Object.is(r, -0) ? 0 : r);
+          return tv("float8", r);
         }
         if (isIntType(a.t)) return tv(a.t, a.v);
         return tv("numeric", numericRound(argNumeric(ctx, a), 0));

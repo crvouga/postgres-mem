@@ -90,6 +90,8 @@ runCatalog(FZZ_SECTION, [
     kind: "divergence",
     fn: () => expect(categoryFromSqlstate("23505")).toBe("constraint_unique"),
   },
+  { id: "FZZ-num-01", kind: "divergence", fn: () => expect(fuzzAssertConfig(40).endOnFailure).toBe(true) },
+  { id: "FZZ-cpy-01", kind: "divergence", fn: () => expect(fuzzAssertConfig(25).seed).toBe(fuzzSeed()) },
   {
     id: "FZZ-seed-01",
     kind: "divergence",

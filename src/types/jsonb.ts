@@ -1,5 +1,9 @@
 import { pgError } from "../errors/error.ts";
-import { type Numeric, numericStripTrailingZeros, numericText, parseNumeric } from "./numeric.ts";
+import { assertNever } from "../runtime/assert.ts";
+import { type Numeric, numericCmp, numericStripTrailingZeros, numericText, parseNumeric } from "./numeric.ts";
+
+const MAX_JSON_PARSE_DEPTH = 512;
+const JSON_TEXT_ENCODER = new TextEncoder();
 
 /**
  * jsonb value tree. Numbers are kept as `numeric` (PG stores jsonb numbers
@@ -46,7 +50,7 @@ class JsonParser {
 
   parse(): JsonbValue {
     this.skipWs();
-    const v = this.parseValue();
+    const v = this.parseValue(0);
     this.skipWs();
     if (this.pos < this.text.length) this.fail("expected end of input");
     return v;
@@ -64,11 +68,14 @@ class JsonParser {
     }
   }
 
-  private parseValue(): JsonbValue {
+  private parseValue(depth: number): JsonbValue {
+    if (depth > MAX_JSON_PARSE_DEPTH) {
+      throw pgError("program_limit_exceeded", "json nesting depth exceeds maximum", "54000");
+    }
     const c = this.text[this.pos];
     if (c === undefined) this.fail("unexpected end");
-    if (c === "{") return this.parseObject();
-    if (c === "[") return this.parseArray();
+    if (c === "{") return this.parseObject(depth + 1);
+    if (c === "[") return this.parseArray(depth + 1);
     if (c === '"') return jsonbStr(this.parseString());
     if (c === "t") {
       this.expect("true");
@@ -90,7 +97,7 @@ class JsonParser {
     this.pos += word.length;
   }
 
-  private parseObject(): JsonbValue {
+  private parseObject(depth: number): JsonbValue {
     this.pos++; // {
     const m = new Map<string, JsonbValue>();
     this.skipWs();
@@ -106,7 +113,7 @@ class JsonParser {
       if (this.text[this.pos] !== ":") this.fail("expected :");
       this.pos++;
       this.skipWs();
-      const value = this.parseValue();
+      const value = this.parseValue(depth);
       m.set(key, value);
       this.skipWs();
       const c = this.text[this.pos];
@@ -122,7 +129,7 @@ class JsonParser {
     }
   }
 
-  private parseArray(): JsonbValue {
+  private parseArray(depth: number): JsonbValue {
     this.pos++; // [
     const items: JsonbValue[] = [];
     this.skipWs();
@@ -132,7 +139,7 @@ class JsonParser {
     }
     for (;;) {
       this.skipWs();
-      items.push(this.parseValue());
+      items.push(this.parseValue(depth));
       this.skipWs();
       const c = this.text[this.pos];
       if (c === ",") {
@@ -256,8 +263,8 @@ function escapeJsonString(s: string): string {
 
 /** jsonb key sort: length first, then byte order (PG lexCompareJsonbStringValue). */
 export function jsonbKeyCompare(a: string, b: string): number {
-  const ea = new TextEncoder().encode(a);
-  const eb = new TextEncoder().encode(b);
+  const ea = JSON_TEXT_ENCODER.encode(a);
+  const eb = JSON_TEXT_ENCODER.encode(b);
   const n = Math.min(ea.length, eb.length);
   for (let i = 0; i < n; i++) {
     if (ea[i]! !== eb[i]!) return ea[i]! < eb[i]! ? -1 : 1;
@@ -343,15 +350,7 @@ export function jsonbCompare(a: JsonbValue, b: JsonbValue): number {
     }
     case "num": {
       const bb = b as Extract<JsonbValue, { j: "num" }>;
-      const na = numericStripTrailingZeros(a.v);
-      const nb = numericStripTrailingZeros(bb.v);
-      const ta = numericText(na);
-      const tb = numericText(nb);
-      if (ta === tb) return 0;
-      const fa = Number(ta);
-      const fb = Number(tb);
-      if (fa !== fb) return fa < fb ? -1 : 1;
-      return ta < tb ? -1 : 1;
+      return numericCmp(numericStripTrailingZeros(a.v), numericStripTrailingZeros(bb.v));
     }
     case "str": {
       const bb = b as Extract<JsonbValue, { j: "str" }>;
@@ -381,6 +380,8 @@ export function jsonbCompare(a: JsonbValue, b: JsonbValue): number {
       }
       return 0;
     }
+    default:
+      return assertNever(a);
   }
 }
 

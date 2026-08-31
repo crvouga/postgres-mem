@@ -34,9 +34,10 @@ export const CANARIES: Canary[] = [
   {
     id: "unique-skip",
     description: "UNIQUE / PRIMARY KEY enforcement is a no-op",
-    file: "src/constraints/enforce.ts",
-    find: "      if (other === key) {",
-    replace: "      if (false && other === key) {",
+    file: "src/indexes/index.ts",
+    find: "    const existing = this.entries.get(key);\n    if (!existing) return;\n    for (const i of existing) {\n      if (rowIdx === undefined || i !== rowIdx) {",
+    replace:
+      "    void key; void rowIdx; if (false) {\n    const existing = this.entries.get(key);\n    if (!existing) return;\n    for (const i of existing) {\n      if (rowIdx === undefined || i !== rowIdx) {",
     probe: ["tests/contract/constraints", "tests/contract/on-conflict"],
   },
   {
@@ -63,5 +64,22 @@ export const CANARIES: Canary[] = [
     find: "    return { rowCount: res.rowCount, command: res.command };",
     replace: "    return { rowCount: 0, command: res.command };",
     probe: ["tests/contract/api"],
+  },
+  {
+    id: "jsonb-compare-float",
+    description: "jsonb numeric compare uses float64 instead of numericCmp",
+    file: "src/types/jsonb.ts",
+    find: "      return numericCmp(numericStripTrailingZeros(a.v), numericStripTrailingZeros(bb.v));",
+    replace:
+      "      { const ta = numericText(numericStripTrailingZeros(a.v)); const tb = numericText(numericStripTrailingZeros(bb.v)); if (ta === tb) return 0; const fa = Number(ta); const fb = Number(tb); if (fa !== fb) return fa < fb ? -1 : 1; return ta < tb ? -1 : 1; }",
+    probe: ["tests/contract/jsonb/compare-order.test.ts"],
+  },
+  {
+    id: "numeric-mul-uncapped",
+    description: "numeric multiplication skips display-scale cap",
+    file: "src/types/numeric.ts",
+    find: "  if (dscale > MAX_DISPLAY_SCALE) {\n    coef = roundToScale(coef, dscale, MAX_DISPLAY_SCALE);\n    dscale = MAX_DISPLAY_SCALE;\n  }\n  return makeNumeric(coef, dscale);",
+    replace: '  return { kind: "numeric", coef, dscale, special: null };',
+    probe: ["tests/meta/canaries/numeric-mul-cap.unit.test.ts"],
   },
 ];

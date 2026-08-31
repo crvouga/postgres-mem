@@ -16,6 +16,7 @@ import type {
   WithClause,
 } from "../ast/nodes.ts";
 import { pgError } from "../errors/error.ts";
+import { conjunctions, joinKeyFromRow, rowsMatchEqKeys, tryIndexedFromItem } from "../planner/access.ts";
 import { bindValueToTyped, datumToJs } from "../api/bind.ts";
 import type { EvalScope } from "../expressions/eval.ts";
 import { evalExpr } from "../expressions/eval.ts";
@@ -24,6 +25,7 @@ import { getSrfFunctions, isSrfName } from "../functions/srf.ts";
 import { catalogRelation } from "../schema/catalog.ts";
 import type { FunctionData } from "../storage/database-state.ts";
 import { canImplicitCast, castTo, unifyTypes } from "../types/cast.ts";
+import { resolveTypeName } from "../types/resolve.ts";
 import { callPlpgsqlScalar, callPlpgsqlSet } from "./plpgsql.ts";
 import { datumCompare, datumKey } from "../types/compare.ts";
 import { type Datum, type TypedValue, type TypeId, tv, UNKNOWN } from "../types/value.ts";
@@ -746,6 +748,39 @@ function checkFullJoinCondition(on: Expr, left: Relation, right: Relation): void
   );
 }
 
+function extractOnEquijoinKeys(
+  on: Expr,
+  left: Relation,
+  right: Relation,
+): { leftIdxs: number[]; rightIdxs: number[] } | null {
+  const leftIdxs: number[] = [];
+  const rightIdxs: number[] = [];
+  for (const part of conjunctions(on)) {
+    if (part.type !== "binop" || part.op !== "=") continue;
+    const ls = joinSideOf(part.left, left, right);
+    const rs = joinSideOf(part.right, left, right);
+    let leftExpr: Expr;
+    let rightExpr: Expr;
+    if (ls === "left" && rs === "right") {
+      leftExpr = part.left;
+      rightExpr = part.right;
+    } else if (ls === "right" && rs === "left") {
+      leftExpr = part.right;
+      rightExpr = part.left;
+    } else {
+      continue;
+    }
+    if (leftExpr.type !== "colref" || rightExpr.type !== "colref") continue;
+    const li = resolveColIdx(left.columns, leftExpr.parts);
+    const ri = resolveColIdx(right.columns, rightExpr.parts);
+    if (li === null || ri === null) continue;
+    leftIdxs.push(li);
+    rightIdxs.push(ri);
+  }
+  if (leftIdxs.length === 0) return null;
+  return { leftIdxs, rightIdxs };
+}
+
 function combineJoin(
   env: ExecEnv,
   kind: "inner" | "left" | "right" | "full" | "cross",
@@ -755,6 +790,7 @@ function combineJoin(
   using: string[] | null,
   usingAlias: string | null,
   rangeVars: Set<string>,
+  equijoinOverride: { leftIdxs: number[]; rightIdxs: number[] } | null = null,
 ): Relation {
   const ctx = env.ctx;
   if (kind === "full" && on !== null) checkFullJoinCondition(on, left, right);
@@ -820,19 +856,48 @@ function combineJoin(
     rows.push(row);
   };
 
+  let hashLeftIdxs: number[] = [];
+  let hashRightIdxs: number[] = [];
+  let hashKeyTypes: TypeId[] = [];
+
+  if (equijoinOverride) {
+    hashLeftIdxs = equijoinOverride.leftIdxs;
+    hashRightIdxs = equijoinOverride.rightIdxs;
+    hashKeyTypes = hashLeftIdxs.map((li, k) => {
+      const lt = left.columns[li]!.type;
+      const rt = right.columns[hashRightIdxs[k]!]!.type;
+      const t = unifyTypes(lt, rt);
+      if (t === null) {
+        throw pgError("datatype_mismatch", `JOIN types ${lt} and ${rt} cannot be matched`, "42804");
+      }
+      return t;
+    });
+  } else if (using && using.length > 0) {
+    hashLeftIdxs = usingLeftIdx;
+    hashRightIdxs = usingRightIdx;
+    hashKeyTypes = columns.slice(0, mergedCount).map((c) => c.type);
+  } else if (on !== null && kind !== "cross") {
+    const extracted = extractOnEquijoinKeys(on, left, right);
+    if (extracted) {
+      hashLeftIdxs = extracted.leftIdxs;
+      hashRightIdxs = extracted.rightIdxs;
+      hashKeyTypes = hashLeftIdxs.map((li, k) => {
+        const lt = left.columns[li]!.type;
+        const rt = right.columns[extracted.rightIdxs[k]!]!.type;
+        const t = unifyTypes(lt, rt);
+        if (t === null) {
+          throw pgError("datatype_mismatch", `JOIN types ${lt} and ${rt} cannot be matched`, "42804");
+        }
+        return t;
+      });
+    }
+  }
+
   const matchRows = (lrow: Datum[], rrow: Datum[]): boolean => {
     if (using && using.length > 0) {
-      for (let k = 0; k < using.length; k++) {
-        const lv = lrow[usingLeftIdx[k]!] ?? null;
-        const rv = rrow[usingRightIdx[k]!] ?? null;
-        if (lv === null || rv === null) return false;
-        const t = columns[k]!.type;
-        const lc = castTo(ctx, tv(left.columns[usingLeftIdx[k]!]!.type, lv), t, {}).v;
-        const rc = castTo(ctx, tv(right.columns[usingRightIdx[k]!]!.type, rv), t, {}).v;
-        if (lc === null || rc === null) return false;
-        if (datumCompare(t, lc, rc, ctx) !== 0) return false;
-      }
-      return true;
+      const leftTypes = hashLeftIdxs.map((i) => left.columns[i]!.type);
+      const rightTypes = hashRightIdxs.map((i) => right.columns[i]!.type);
+      return rowsMatchEqKeys(ctx, lrow, rrow, hashLeftIdxs, hashRightIdxs, leftTypes, rightTypes, hashKeyTypes);
     }
     if (on === null) return true; // cross join
     const row: Datum[] = [];
@@ -843,18 +908,48 @@ function combineJoin(
     return evalPredicate(env, jscope, on);
   };
 
-  for (const lrow of left.rows) {
-    let matched = false;
+  const useHashJoin = kind !== "cross" && hashLeftIdxs.length > 0;
+
+  if (useHashJoin) {
+    const leftTypes = hashLeftIdxs.map((i) => left.columns[i]!.type);
+    const rightTypes = hashRightIdxs.map((i) => right.columns[i]!.type);
+    const buckets = new Map<string, number[]>();
     for (let ri = 0; ri < right.rows.length; ri++) {
-      const rrow = right.rows[ri]!;
-      if (matchRows(lrow, rrow)) {
+      const key = joinKeyFromRow(right.rows[ri]!, hashRightIdxs, rightTypes, hashKeyTypes, ctx);
+      if (key === null) continue;
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(ri);
+      else buckets.set(key, [ri]);
+    }
+    for (const lrow of left.rows) {
+      let matched = false;
+      const key = joinKeyFromRow(lrow, hashLeftIdxs, leftTypes, hashKeyTypes, ctx);
+      const candidates = key === null ? [] : (buckets.get(key) ?? []);
+      for (const ri of candidates) {
+        const rrow = right.rows[ri]!;
+        if (!matchRows(lrow, rrow)) continue;
         matched = true;
         rightMatched[ri] = true;
         emit(lrow, rrow);
       }
+      if (!matched && (kind === "left" || kind === "full")) {
+        emit(lrow, null);
+      }
     }
-    if (!matched && (kind === "left" || kind === "full")) {
-      emit(lrow, null);
+  } else {
+    for (const lrow of left.rows) {
+      let matched = false;
+      for (let ri = 0; ri < right.rows.length; ri++) {
+        const rrow = right.rows[ri]!;
+        if (matchRows(lrow, rrow)) {
+          matched = true;
+          rightMatched[ri] = true;
+          emit(lrow, rrow);
+        }
+      }
+      if (!matched && (kind === "left" || kind === "full")) {
+        emit(lrow, null);
+      }
     }
   }
   if (kind === "right" || kind === "full") {
@@ -865,7 +960,7 @@ function combineJoin(
   return { columns, rows };
 }
 
-export function buildFrom(env: ExecEnv, items: FromItem[]): Source {
+export function buildFrom(env: ExecEnv, items: FromItem[], where: Expr | null = null): Source {
   if (items.length === 0) {
     return { rel: { columns: [], rows: [[]] }, rangeVars: new Set() };
   }
@@ -908,14 +1003,23 @@ export function buildFrom(env: ExecEnv, items: FromItem[]): Source {
       acc = { rel: { columns: cols, rows }, rangeVars: vars };
     } else {
       const src = materializeItem(env, item, env.outer);
-      const cols = [...accRel.columns, ...src.rel.columns];
-      const rows: Datum[][] = [];
-      for (const lrow of accRel.rows) {
-        for (const rrow of src.rel.rows) {
-          rows.push([...lrow, ...rrow]);
+      const rangeVars = new Set([...accVars, ...src.rangeVars]);
+      const eq = where ? extractOnEquijoinKeys(where, accRel, src.rel) : null;
+      if (eq) {
+        acc = {
+          rel: combineJoin(env, "inner", accRel, src.rel, null, null, null, rangeVars, eq),
+          rangeVars,
+        };
+      } else {
+        const cols = [...accRel.columns, ...src.rel.columns];
+        const rows: Datum[][] = [];
+        for (const lrow of accRel.rows) {
+          for (const rrow of src.rel.rows) {
+            rows.push([...lrow, ...rrow]);
+          }
         }
+        acc = { rel: { columns: cols, rows }, rangeVars };
       }
-      acc = { rel: { columns: cols, rows }, rangeVars: new Set([...accVars, ...src.rangeVars]) };
     }
   }
   return acc!;
@@ -1571,7 +1675,7 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
   const ctx = env.ctx;
 
   // 1. FROM
-  const source = buildFrom(env, core.from);
+  const source = buildFrom(env, core.from, core.where);
   const srcCols = source.rel.columns;
   const rangeVars = source.rangeVars;
 
@@ -1580,8 +1684,18 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
   // 2. WHERE
   let srcRows = source.rel.rows;
   if (core.where) {
-    const where = core.where;
-    srcRows = srcRows.filter((row) => evalPredicate(env, rowScope(row), where));
+    if (core.from.length === 1) {
+      const indexed = tryIndexedFromItem(env, core.from[0]!, core.where);
+      if (indexed !== null) {
+        srcRows = indexed;
+      } else {
+        const where = core.where;
+        srcRows = srcRows.filter((row) => evalPredicate(env, rowScope(row), where));
+      }
+    } else {
+      const where = core.where;
+      srcRows = srcRows.filter((row) => evalPredicate(env, rowScope(row), where));
+    }
   }
 
   // 3. collect aggregate / window / grouping calls
@@ -1900,24 +2014,34 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
 
   // resolve UNKNOWN output types via a null probe when there were no rows
   if (ctxs.length === 0) {
+    const probeScope = new RowScope(
+      srcCols,
+      srcCols.map(() => null),
+      env.outer,
+      rangeVars,
+    );
+    const probeExtras = {
+      aggMap: new Map(),
+      windowAt: () => tv(UNKNOWN, null),
+    };
+    const probeType = (expr: Expr): TypeId => {
+      if (expr.type === "cast") {
+        return resolveTypeName(ctx.state, expr.target).column.id;
+      }
+      if (expr.type === "func") {
+        const name = expr.name[expr.name.length - 1]!;
+        if (isAggregateName(name)) {
+          const argTypes: TypeId[] = expr.args.map((a) => probeType(a));
+          return createAggregate(ctx, name, argTypes).result().t;
+        }
+      }
+      return evalScalar(env, probeScope, expr, probeExtras).t;
+    };
     for (let k = 0; k < projItems.length; k++) {
       const p = projItems[k]!;
       if (outColumns[k]!.type !== UNKNOWN || p.kind === "col") continue;
-      try {
-        const probeScope = new RowScope(
-          srcCols,
-          srcCols.map(() => null),
-          env.outer,
-          rangeVars,
-        );
-        const v = evalScalar(env, probeScope, p.expr!, {
-          aggMap: new Map(),
-          windowAt: () => tv(UNKNOWN, null),
-        });
-        outColumns[k]!.type = v.t;
-      } catch {
-        outColumns[k]!.type = "text";
-      }
+      const t = probeType(p.expr!);
+      outColumns[k]!.type = t === UNKNOWN ? "text" : t;
     }
   }
   for (const c of outColumns) {

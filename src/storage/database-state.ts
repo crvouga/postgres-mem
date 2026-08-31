@@ -74,6 +74,8 @@ export class TableData {
   readonly oid: number;
   /** >0 while shared with a clone or transaction snapshot. */
   shareCount = 0;
+  /** Derived unique/btree index maps; null until built or invalidated. */
+  indexStores: Map<string, import("../indexes/index.ts").IndexStore> | null = null;
 
   constructor(schema: string, name: string, columns: ColumnMeta[], oid: number, temp = false) {
     this.schema = schema;
@@ -110,6 +112,7 @@ export class TableData {
     if (!this.slab) return;
     this.rows = this.slab.materialize();
     this.slab = null;
+    this.indexStores = null;
   }
 
   /** Writable row storage; materializes slab if needed. */
@@ -149,6 +152,7 @@ export class TableData {
     }
     t.constraints = this.constraints.map((c) => ({ ...c }));
     t.triggers = this.triggers.map((tr) => ({ ...tr }));
+    t.indexStores = this.indexStores ? new Map([...this.indexStores].map(([k, v]) => [k, v.clone()])) : null;
     return t;
   }
 

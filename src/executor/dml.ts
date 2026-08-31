@@ -18,6 +18,7 @@ import {
   uniqueSpecsFor,
 } from "../constraints/enforce.ts";
 import { pgError, unsupported } from "../errors/error.ts";
+import { indexInsertRow, indexUpdateRow, rebuildTableIndexes } from "../indexes/maintain.ts";
 import { applyDomainChecks } from "../expressions/eval.ts";
 import { sequenceNextval } from "../functions/misc-fns.ts";
 import type { ColumnMeta, TableData } from "../storage/database-state.ts";
@@ -261,6 +262,7 @@ function applyOnConflictUpdate(
   applyUpdateSets(env, table, sets, scope, updated);
   computeGeneratedColumns(env, table, updated);
   rows[existingIdx] = updated;
+  indexUpdateRow(env, table, existingIdx, existing, updated);
   checkNotNull(env, table, updated);
   checkChecks(env, table, updated);
   checkUnique(env, table, updated, existingIdx);
@@ -357,14 +359,10 @@ export function executeInsert(env0: ExecEnv, stmt: InsertStmt): ExecResult {
 
     checkNotNull(env, table, newRow);
     checkChecks(env, table, newRow);
+    checkUnique(env, table, newRow, rows.length);
+    checkForeignKeys(env, table, newRow);
     rows.push(newRow);
-    try {
-      checkUnique(env, table, newRow, rows.length - 1);
-      checkForeignKeys(env, table, newRow);
-    } catch (err) {
-      rows.pop();
-      throw err;
-    }
+    indexInsertRow(env, table, rows.length - 1, newRow);
     insertedCount++;
     insertedRows.push(newRow);
     fireRowTriggers(env, table, "after", "insert", null, newRow);
@@ -501,6 +499,7 @@ export function executeUpdate(env0: ExecEnv, stmt: UpdateStmt): ExecResult {
       rows[ri] = oldRow;
       throw err;
     }
+    indexUpdateRow(env, table, ri, oldRow, finalRow);
     handleReferencedUpdate(env, table, [oldRow], [finalRow]);
     updateCount++;
     updatedRows.push(finalRow);
@@ -563,6 +562,7 @@ export function executeDelete(env0: ExecEnv, stmt: DeleteStmt): ExecResult {
   for (const row of deletedRows) {
     fireRowTriggers(env, table, "after", "delete", row, null);
   }
+  if (deletedRows.length > 0) rebuildTableIndexes(env, table);
 
   env.ctx.state.changes = deletedRows.length;
   if (stmt.returning) {

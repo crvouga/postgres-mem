@@ -1,4 +1,5 @@
 import { pgError } from "../errors/error.ts";
+import { assertBounds } from "../runtime/assert.ts";
 
 /**
  * Arbitrary-precision decimal mirroring PostgreSQL's `numeric`.
@@ -20,6 +21,7 @@ const MAX_DISPLAY_SCALE = 1000;
 const MIN_SIG_DIGITS = 16;
 
 export function makeNumeric(coef: bigint, dscale: number): Numeric {
+  assertBounds(dscale, 0, MAX_DISPLAY_SCALE, "numeric dscale");
   return { kind: "numeric", coef, dscale, special: null };
 }
 
@@ -192,7 +194,13 @@ export function numericMul(a: Numeric, b: Numeric): Numeric {
     if (sa === 0 || sb === 0) return NUMERIC_NAN; // inf * 0
     return sa * sb > 0 ? NUMERIC_PINF : NUMERIC_NINF;
   }
-  return makeNumeric(a.coef * b.coef, a.dscale + b.dscale);
+  let dscale = a.dscale + b.dscale;
+  let coef = a.coef * b.coef;
+  if (dscale > MAX_DISPLAY_SCALE) {
+    coef = roundToScale(coef, dscale, MAX_DISPLAY_SCALE);
+    dscale = MAX_DISPLAY_SCALE;
+  }
+  return makeNumeric(coef, dscale);
 }
 
 /** Decimal weight: exponent of the first significant digit (0 for 1..9). */
@@ -384,7 +392,7 @@ export function numericSqrt(a: Numeric): Numeric {
 }
 
 function bigintSqrt(n: bigint): bigint {
-  if (n < 0n) throw new Error("negative");
+  if (n < 0n) throw pgError("internal", "bigintSqrt: negative operand", "XX000");
   if (n < 2n) return n;
   let x = 1n << BigInt(Math.ceil(n.toString(2).length / 2));
   for (;;) {

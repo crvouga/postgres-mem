@@ -21,6 +21,8 @@ const predicateArb = fc.oneof(
   fc.record({ kind: fc.constant("isnull" as const) }),
   fc.record({ kind: fc.constant("notnull" as const) }),
   fc.record({ kind: fc.constant("like" as const), p: fc.constantFrom("%", "a%", "%z", "_", "%b%") }),
+  fc.record({ kind: fc.constant("numgt" as const), n: intArb }),
+  fc.record({ kind: fc.constant("extract" as const), part: fc.constantFrom("month", "day", "hour") }),
 );
 
 type Predicate = fc.InferValue<typeof predicateArb>;
@@ -33,6 +35,9 @@ function predicateSql(pred: Predicate, prefix = ""): string {
   if (pred.kind === "eq") return `${a} = ${pred.n}`;
   if (pred.kind === "isnull") return `${a} IS NULL`;
   if (pred.kind === "notnull") return `${a} IS NOT NULL`;
+  if (pred.kind === "numgt") return `${a}::numeric > ${pred.n}::numeric`;
+  if (pred.kind === "extract")
+    return `EXTRACT(${pred.part} FROM timestamp '2020-05-15 14:30:00') >= 0 AND ${a} IS NOT NULL`;
   return `${b} LIKE ${sqlLiteral(pred.p)}`;
 }
 

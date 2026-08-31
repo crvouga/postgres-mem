@@ -1,4 +1,5 @@
 import { pgError } from "../errors/error.ts";
+import { assert } from "../runtime/assert.ts";
 import type { DatabaseState } from "../storage/database-state.ts";
 
 interface Snapshot {
@@ -7,14 +8,14 @@ interface Snapshot {
 }
 
 /**
- * Single-session transaction manager: BEGIN clones the whole state (datums are
- * immutable; rows are copied), ROLLBACK restores it. Savepoints stack inner
- * snapshots. The PRNG state participates so `random()` draws rewind on
- * rollback (determinism invariant, mirrors sqlite-mem).
+ * Single-session transaction manager with copy-on-write snapshots: BEGIN /
+ * SAVEPOINT freeze shared catalog objects and capture a shallow clone; writes
+ * copy-on-write via ensureWritableTable. ROLLBACK restores the snapshot.
  */
 export class TransactionManager {
   private base: Snapshot | null = null;
   private savepoints: Array<{ name: string; snap: Snapshot }> = [];
+  private freezeDepth = 0;
 
   constructor(private readonly state: DatabaseState) {}
 
@@ -23,7 +24,9 @@ export class TransactionManager {
   }
 
   private takeSnapshot(): Snapshot {
-    return { state: this.state.clone(), prngState: this.state.prng.getState() };
+    this.state.freezeShared();
+    this.freezeDepth++;
+    return { state: this.state.cloneShallow(), prngState: this.state.prng.getState() };
   }
 
   private restore(snap: Snapshot): void {
@@ -31,21 +34,28 @@ export class TransactionManager {
     this.state.prng.setState(snap.prngState);
   }
 
+  private thawOnce(): void {
+    if (this.freezeDepth > 0) {
+      this.state.thawShared();
+      this.freezeDepth--;
+    }
+  }
+
   begin(): void {
     if (this.base !== null) {
-      // PG raises a WARNING and keeps the transaction; we mirror the no-op
       return;
     }
     this.base = this.takeSnapshot();
     this.state.inTransaction = true;
+    assert(this.freezeDepth === 1, "BEGIN freeze depth");
   }
 
   commit(): void {
-    // COMMIT outside a transaction is a WARNING no-op in PG
     this.base = null;
     this.savepoints = [];
     this.state.inTransaction = false;
     this.state.localSettings.clear();
+    while (this.freezeDepth > 0) this.thawOnce();
   }
 
   rollback(): void {
@@ -56,6 +66,7 @@ export class TransactionManager {
     this.savepoints = [];
     this.state.inTransaction = false;
     this.state.localSettings.clear();
+    while (this.freezeDepth > 0) this.thawOnce();
   }
 
   savepoint(name: string): void {
@@ -74,7 +85,6 @@ export class TransactionManager {
     const idx = this.findSavepoint(name);
     const sp = this.savepoints[idx]!;
     this.restore(sp.snap);
-    // the savepoint itself survives ROLLBACK TO
     this.savepoints.splice(idx + 1);
   }
 
@@ -88,10 +98,10 @@ export class TransactionManager {
     throw pgError("invalid_savepoint_specification", `savepoint "${name}" does not exist`, "3B001");
   }
 
-  /** abort any open transaction without restoring (used by Database.close) */
   reset(): void {
     this.base = null;
     this.savepoints = [];
     this.state.inTransaction = false;
+    this.freezeDepth = 0;
   }
 }

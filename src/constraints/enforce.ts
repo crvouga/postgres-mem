@@ -1,4 +1,5 @@
 import { pgError } from "../errors/error.ts";
+import { indexStoreFor } from "../indexes/maintain.ts";
 import type { ExecEnv } from "../executor/relation.ts";
 import { RowScope } from "../executor/relation.ts";
 import { makeEvalScope } from "../executor/select.ts";
@@ -89,7 +90,7 @@ export function uniqueSpecsFor(env: ExecEnv, table: TableData): UniqueSpec[] {
   return specs;
 }
 
-function uniqueKeyOf(env: ExecEnv, table: TableData, spec: UniqueSpec, row: Datum[]): string | null {
+export function uniqueKeyOf(env: ExecEnv, table: TableData, spec: UniqueSpec, row: Datum[]): string | null {
   if (spec.where) {
     const scope = makeEvalScope(env, tableScope(table, row));
     const v = evalExpr(env.ctx, scope, spec.where);
@@ -141,18 +142,7 @@ export function checkUnique(env: ExecEnv, table: TableData, row: Datum[], selfId
   for (const spec of uniqueSpecsFor(env, table)) {
     const key = uniqueKeyOf(env, table, spec, row);
     if (key === null) continue;
-    for (let i = 0; i < table.rowCount(); i++) {
-      if (i === selfIdx) continue;
-      const other = uniqueKeyOf(env, table, spec, table.rowAt(i));
-      if (other === key) {
-        throw pgError(
-          "constraint_unique",
-          `duplicate key value violates unique constraint "${spec.name}"`,
-          "23505",
-          // PG adds a DETAIL line; kept in message for classification purposes
-        );
-      }
-    }
+    indexStoreFor(env, table, spec).checkUnique(key, selfIdx);
   }
 }
 
@@ -160,11 +150,8 @@ export function checkUnique(env: ExecEnv, table: TableData, row: Datum[], selfId
 export function findConflict(env: ExecEnv, table: TableData, spec: UniqueSpec, row: Datum[]): number | null {
   const key = uniqueKeyOf(env, table, spec, row);
   if (key === null) return null;
-  for (let i = 0; i < table.rowCount(); i++) {
-    const other = uniqueKeyOf(env, table, spec, table.rowAt(i));
-    if (other === key) return i;
-  }
-  return null;
+  const hits = indexStoreFor(env, table, spec).lookup(key);
+  return hits.length > 0 ? hits[0]! : null;
 }
 
 export type { IndexMeta, UniqueSpec };
