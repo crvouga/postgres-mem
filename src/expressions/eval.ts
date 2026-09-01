@@ -272,24 +272,44 @@ function boolArg(ctx: EngineCtx, kind: string, v: TypedValue): boolean | null {
   return toBool(ctx, v);
 }
 
-/** side-effect-free expressions PG would type-check at plan time even when short-circuited */
-function isPureLiteral(e: Expr): boolean {
-  switch (e.type) {
-    case "number_lit":
-    case "string_lit":
-    case "bool_lit":
-    case "null_lit":
-      return true;
-    case "cast":
-      return isPureLiteral(e.expr);
-    default:
-      return false;
+/** WHERE/HAVING/ON/etc. predicates must already be boolean (or unknown); null → false. */
+export function evalAsPredicate(ctx: EngineCtx, kind: string, v: TypedValue): boolean {
+  return boolArg(ctx, kind, v) === true;
+}
+
+/** Plan-time: validate AND/OR/NOT operands are boolean (PG 42804), including short-circuited branches. */
+export function checkBoolExprType(ctx: EngineCtx, scope: EvalScope, e: Expr, kind: string): void {
+  if (e.type === "binop" && e.op === "and") {
+    boolArg(ctx, "AND", evalExpr(ctx, scope, e.left));
+    boolArg(ctx, "AND", evalExpr(ctx, scope, e.right));
+    return;
+  }
+  if (e.type === "binop" && e.op === "or") {
+    boolArg(ctx, "OR", evalExpr(ctx, scope, e.left));
+    boolArg(ctx, "OR", evalExpr(ctx, scope, e.right));
+    return;
+  }
+  if (e.type === "unop" && e.op === "not") {
+    boolArg(ctx, "NOT", evalExpr(ctx, scope, e.operand));
+    return;
+  }
+  if (e.type === "cast") {
+    checkBoolExprType(ctx, scope, e.expr, kind);
+    return;
+  }
+  if (e.type === "case") {
+    validateSearchedCaseTree(ctx, scope, e);
+    return;
+  }
+  const v = evalExpr(ctx, scope, e);
+  if (v.t !== "bool" && v.t !== "unknown") {
+    throw pgError("datatype_mismatch", `argument of ${kind} must be type boolean, not type ${typeDisplayName(v.t)}`);
   }
 }
 
-/** mimic plan-time typing of a short-circuited operand: literals are checked anyway */
+/** mimic plan-time typing of a short-circuited operand: PG type-checks every branch */
 function checkSkippedBoolArg(ctx: EngineCtx, scope: EvalScope, kind: string, e: Expr): void {
-  if (isPureLiteral(e)) boolArg(ctx, kind, evalExpr(ctx, scope, e));
+  boolArg(ctx, kind, evalExpr(ctx, scope, e));
 }
 
 function evalBinaryNode(ctx: EngineCtx, scope: EvalScope, op: string, leftE: Expr, rightE: Expr): TypedValue {
@@ -407,7 +427,58 @@ export function applyDomainChecks(ctx: EngineCtx, domainKey: string, value: Type
 
 // --- CASE -----------------------------------------------------------------------
 
+/** Plan-time (PG 42804): every searched CASE/WHEN must be boolean before any branch runs. */
+function validateSearchedCaseTree(ctx: EngineCtx, scope: EvalScope, e: CaseExpr): void {
+  if (e.operand !== null) return;
+  for (const { when, then } of e.whens) {
+    boolArg(ctx, "CASE/WHEN", evalExpr(ctx, scope, when));
+    validateCaseSubExpr(ctx, scope, then);
+  }
+  if (e.elseExpr !== null) validateCaseSubExpr(ctx, scope, e.elseExpr);
+}
+
+function validateCaseSubExpr(ctx: EngineCtx, scope: EvalScope, e: Expr): void {
+  switch (e.type) {
+    case "case":
+      validateSearchedCaseTree(ctx, scope, e);
+      return;
+    case "binop":
+      if (e.op === "and") {
+        boolArg(ctx, "AND", evalExpr(ctx, scope, e.left));
+        boolArg(ctx, "AND", evalExpr(ctx, scope, e.right));
+      } else if (e.op === "or") {
+        boolArg(ctx, "OR", evalExpr(ctx, scope, e.left));
+        boolArg(ctx, "OR", evalExpr(ctx, scope, e.right));
+      }
+      validateCaseSubExpr(ctx, scope, e.left);
+      validateCaseSubExpr(ctx, scope, e.right);
+      return;
+    case "unop":
+      if (e.op === "not") {
+        boolArg(ctx, "NOT", evalExpr(ctx, scope, e.operand));
+      }
+      validateCaseSubExpr(ctx, scope, e.operand);
+      return;
+    case "cast":
+    case "collate":
+      validateCaseSubExpr(ctx, scope, e.expr);
+      return;
+    case "func":
+      for (const arg of e.args) validateCaseSubExpr(ctx, scope, arg);
+      return;
+    case "row":
+      for (const item of e.items) validateCaseSubExpr(ctx, scope, item);
+      return;
+    case "array_ctor":
+      for (const item of e.items) validateCaseSubExpr(ctx, scope, item);
+      return;
+    default:
+      return;
+  }
+}
+
 function evalCase(ctx: EngineCtx, scope: EvalScope, e: CaseExpr): TypedValue {
+  validateSearchedCaseTree(ctx, scope, e);
   let chosen: Expr | null = null;
   if (e.operand !== null) {
     const operand = evalExpr(ctx, scope, e.operand);
@@ -421,7 +492,8 @@ function evalCase(ctx: EngineCtx, scope: EvalScope, e: CaseExpr): TypedValue {
     }
   } else {
     for (const { when, then } of e.whens) {
-      if (toBool(ctx, evalExpr(ctx, scope, when)) === true) {
+      const w = evalExpr(ctx, scope, when);
+      if (boolArg(ctx, "CASE/WHEN", w) === true) {
         chosen = then;
         break;
       }

@@ -1,5 +1,5 @@
 import { InMemoryAdapter } from "../adapters/in-memory.ts";
-import { deepCompareResults } from "../harness/normalize.ts";
+import { deepCompareResults, type CompareOptions } from "../harness/normalize.ts";
 import { createOracleAdapter } from "../harness/oracle.ts";
 import { dumpLogicalState } from "../harness/state-dump.ts";
 import type { ContractDb, QueryResult, SqlValue } from "../harness/types.ts";
@@ -31,11 +31,13 @@ export function compareOrReport(
   setup: unknown,
   memory: QueryResult,
   postgres: QueryResult,
+  options?: CompareOptions,
 ): void {
   const comparison = deepCompareResults(memory, postgres, {
     messageTier: "B",
     ignoreErrorPhase: true,
     ignoreWriteCounters: (memory.columns?.length ?? 0) > 0 || (postgres.columns?.length ?? 0) > 0,
+    ...options,
   });
   if (comparison.equal) return;
 

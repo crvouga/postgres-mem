@@ -147,7 +147,7 @@ Requires [Bun](https://bun.sh).
 
 ```bash
 bun install
-bun run ci:local # same gates as GitHub Actions CI (except publish)
+bun run check:full # same gates as GitHub Actions CI (except publish)
 bun run check # format + lint + typecheck + postgres-compat suite
 bun run format
 bun run lint

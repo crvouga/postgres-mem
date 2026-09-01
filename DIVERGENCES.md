@@ -2,7 +2,7 @@
 
 > Auto-generated from [`compat/divergences.json`](compat/divergences.json). Do not edit by hand — run `bun run divergences`.
 
-Generated: 2026-08-21 · 19 entries
+Generated: 2026-09-01 · 18 entries
 
 | ID | Scope | Predicate | Pinned by |
 | --- | --- | --- | --- |
@@ -14,7 +14,6 @@ Generated: 2026-08-21 · 19 entries
 | `dump-compat-noop` | sql | DO blocks and ALTER TABLE SET (storage/reloptions) execute as no-ops so schema dumps can load without intercepts; PL/pgSQL and storage parameters are NOT APPLICABLE | `API-dump-01`, `API-do-01`, `API-set-01` |
 | `empty-script-rejected` | sql | exec of a statement-free script (comments/whitespace only) raises an empty-statement error; PostgreSQL accepts it as a no-op | `TOK-cmt-04` |
 | `row-value-subquery-arity` | sql | Row-constructor arity mismatches surface at execution (21000) instead of parse time (42601), and multi-column row-value IN (SELECT ...) is rejected as unsupported | `PAR-row-03`, `EXP-in-03` |
-| `unary-minus-folding` | sql | Repeated unary minus is folded into the numeric literal during parse, so '- -5' is rejected; PostgreSQL evaluates it to 5 | `PAR-neg-01` |
 | `float8-overflow-saturates` | sql | '1e400'::float8 saturates to Infinity instead of raising 22003 out of range | `TYP-float-04` |
 | `round-half-away-from-zero` | sql | round(float8) rounds ties away from zero (round(2.5::float8) = 3); PostgreSQL rounds half to even (= 2) | `FUN-round-02` |
 | `drop-cascade-view-retained` | sql | DROP TABLE ... CASCADE does not drop dependent views; the view remains and errors when queried | `DDL-drop-03` |
@@ -59,10 +58,6 @@ postgres-mem requires at least one statement per exec call.
 ### `row-value-subquery-arity`
 
 Single-column IN subqueries have full parity; multi-column row-value subquery comparison is out of scope for this milestone and fails loud.
-
-### `unary-minus-folding`
-
-Use parentheses (-(-5)) for nested negation.
 
 ### `float8-overflow-saturates`
 

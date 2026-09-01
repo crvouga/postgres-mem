@@ -122,13 +122,6 @@
       "pinnedBy": ["PAR-row-03", "EXP-in-03"]
     },
     {
-      "id": "unary-minus-folding",
-      "scope": "sql",
-      "predicate": "Repeated unary minus is folded into the numeric literal during parse, so '- -5' is rejected; PostgreSQL evaluates it to 5",
-      "specifiedBehavior": "Use parentheses (-(-5)) for nested negation.",
-      "pinnedBy": ["PAR-neg-01"]
-    },
-    {
       "id": "float8-overflow-saturates",
       "scope": "sql",
       "predicate": "'1e400'::float8 saturates to Infinity instead of raising 22003 out of range",

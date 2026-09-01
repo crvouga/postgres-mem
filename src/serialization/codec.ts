@@ -148,10 +148,14 @@ export function encodeDatabaseState(state: DatabaseState, runtime: SnapshotRunti
   }
 
   pool.finalize();
-  forceSchemaIntern(pool, schemas);
+  forceAllEncodeIntern(pool, state, schemas);
 
   const internId = (s: string): number => pool.id(s);
-  const forceId = (s: string): number => pool.forceId(s);
+  const forceId = (s: string): number => {
+    const id = pool.id(s);
+    if (id < 0) throw snapshotError();
+    return id;
+  };
 
   const w = new Writer(64 * 1024);
   w.raw(MAGIC);
@@ -276,7 +280,8 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
 
     const tableCount = readVarintU32(r);
     for (let i = 0; i < tableCount; i++) {
-      const meta = readBjv(r, intern) as TableMetaBjv;
+      const meta = readBjv(r, intern);
+      validateTableMetaBjv(meta);
       const table = new TableData(meta.schema, meta.name, meta.columns, meta.oid, meta.temp);
       table.constraints = meta.constraints;
       table.triggers = meta.triggers;
@@ -289,7 +294,8 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
 
     const viewCount = readVarintU32(r);
     for (let i = 0; i < viewCount; i++) {
-      const meta = readBjv(r, intern) as ViewMetaBjv;
+      const meta = readBjv(r, intern);
+      validateViewMetaBjv(meta);
       let matRows: Datum[][] | null = null;
       if (r.u8() === 1) {
         const matRowCount = readVarintU32(r);
@@ -299,7 +305,7 @@ function decodeInner(snapshot: Uint8Array, prng: Prng, clock: Clock): DecodedSna
         const slab = new ColumnarSlab(snapshot, matRowCount, cols, intern);
         matRows = slab.materialize();
       }
-      const view: ViewData = { ...meta, matRows };
+      const view: ViewData = { ...(meta as ViewMetaBjv), matRows };
       schema.views.set(view.name, view);
     }
 
@@ -723,6 +729,34 @@ function readSchemaCatalog(
 
 // --- helpers -------------------------------------------------------------------
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateColumnType(value: unknown): asserts value is ColumnMeta["type"] {
+  if (!isRecord(value) || typeof value.id !== "string") throw snapshotError();
+}
+
+function validateColumnMeta(value: unknown): asserts value is ColumnMeta {
+  if (!isRecord(value) || typeof value.name !== "string") throw snapshotError();
+  validateColumnType(value.type);
+}
+
+function validateTableMetaBjv(value: unknown): asserts value is TableMetaBjv {
+  if (!isRecord(value) || typeof value.name !== "string" || typeof value.schema !== "string") throw snapshotError();
+  if (!Array.isArray(value.columns)) throw snapshotError();
+  for (const col of value.columns) validateColumnMeta(col);
+}
+
+function validateViewMetaBjv(value: unknown): asserts value is ViewMetaBjv {
+  if (!isRecord(value) || typeof value.name !== "string" || typeof value.schema !== "string") throw snapshotError();
+  if (value.matColumns === null || value.matColumns === undefined) return;
+  if (!Array.isArray(value.matColumns)) throw snapshotError();
+  for (const col of value.matColumns) {
+    if (!isRecord(col) || typeof col.name !== "string" || typeof col.type !== "string") throw snapshotError();
+  }
+}
+
 function snapshotError(): PostgresError {
   return new PostgresError("snapshot_format", "invalid or truncated postgres-mem snapshot", "XX000");
 }
@@ -741,6 +775,69 @@ function compareNames(a: string, b: string): number {
 
 function sortedValues<T extends { name: string }>(map: Map<string, T>): T[] {
   return [...map.values()].sort((a, b) => compareNames(a.name, b.name));
+}
+
+function forceAllEncodeIntern(pool: InternPool, state: DatabaseState, schemas: SchemaData[]): void {
+  forceSchemaIntern(pool, schemas);
+  for (const [k, v] of state.settings) {
+    pool.forceId(k);
+    pool.forceId(v);
+  }
+  if (state.lastSequence) {
+    pool.forceId(state.lastSequence.schema);
+    pool.forceId(state.lastSequence.name);
+  }
+  for (const schema of schemas) {
+    pool.forceId(schema.name);
+    for (const table of sortedValues(schema.tables)) {
+      for (const row of table.allRows()) {
+        for (const d of row) forceDatumIntern(pool, d);
+      }
+    }
+    for (const view of sortedValues(schema.views)) {
+      if (view.matRows) {
+        for (const row of view.matRows) {
+          for (const d of row) forceDatumIntern(pool, d);
+        }
+      }
+    }
+  }
+}
+
+function forceDatumIntern(pool: InternPool, value: Datum): void {
+  if (value === null) return;
+  if (typeof value === "string") {
+    pool.forceId(value);
+    return;
+  }
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "bigint") return;
+  if (value instanceof Uint8Array) return;
+  switch (value.kind) {
+    case "numeric": {
+      const min = -0x8000000000000000n;
+      const max = 0x7fffffffffffffffn;
+      if (value.coef < min || value.coef > max) pool.forceId(value.coef.toString());
+      return;
+    }
+    case "pgarray": {
+      pool.forceId(value.elem);
+      for (const item of value.items) forceDatumIntern(pool, item);
+      return;
+    }
+    case "pgrecord": {
+      for (const t of value.types) pool.forceId(t);
+      if (value.names) {
+        for (const n of value.names) pool.forceId(n);
+      }
+      for (const item of value.values) forceDatumIntern(pool, item);
+      return;
+    }
+    case "jsonb":
+      pool.forceId(jsonbText(value.value));
+      return;
+    default:
+      return;
+  }
 }
 
 function forceSchemaIntern(pool: InternPool, schemas: SchemaData[]): void {

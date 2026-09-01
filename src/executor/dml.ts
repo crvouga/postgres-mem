@@ -33,6 +33,24 @@ import { fireRowTriggers } from "./triggers.ts";
 // helpers
 // ---------------------------------------------------------------------------
 
+/** Roll back trigger/constraint side effects when a DML statement fails under autocommit. */
+function withStatementRollback<T>(env: ExecEnv, fn: () => T): T {
+  if (env.ctx.state.inTransaction) return fn();
+  const state = env.ctx.state;
+  state.freezeShared();
+  const snap = state.cloneShallow();
+  const prngSnap = state.prng.getState();
+  try {
+    return fn();
+  } catch (e) {
+    state.restoreFrom(snap);
+    state.prng.setState(prngSnap);
+    throw e;
+  } finally {
+    state.thawShared();
+  }
+}
+
 function requireTargetTable(env: ExecEnv, parts: string[], verb: string): TableData {
   const state = env.ctx.state;
   const table = state.findTable(parts);
@@ -282,98 +300,100 @@ export function executeInsert(env0: ExecEnv, stmt: InsertStmt): ExecResult {
   const insertedRows: Datum[][] = [];
   let insertedCount = 0;
 
-  for (const srcRow of sourceRows) {
-    // assemble the full row
-    const row: Datum[] = table.columns.map(() => null);
-    const provided = new Set<number>();
-    for (let k = 0; k < srcRow.length; k++) {
-      const ci = colIdxs[k]!;
-      const col = table.columns[ci]!;
-      const cell = srcRow[k]!;
-      if (cell === DEFAULT_MARKER) {
-        row[ci] = columnDefault(env, table, col);
+  return withStatementRollback(env, () => {
+    for (const srcRow of sourceRows) {
+      // assemble the full row
+      const row: Datum[] = table.columns.map(() => null);
+      const provided = new Set<number>();
+      for (let k = 0; k < srcRow.length; k++) {
+        const ci = colIdxs[k]!;
+        const col = table.columns[ci]!;
+        const cell = srcRow[k]!;
+        if (cell === DEFAULT_MARKER) {
+          row[ci] = columnDefault(env, table, col);
+          provided.add(ci);
+          continue;
+        }
+        if (col.identity?.always && stmt.overriding !== "system") {
+          throw pgError("generated_always", `cannot insert a non-DEFAULT value into column "${col.name}"`, "428C9");
+        }
+        row[ci] = coerceToColumn(env, cell, col);
         provided.add(ci);
-        continue;
       }
-      if (col.identity?.always && stmt.overriding !== "system") {
-        throw pgError("generated_always", `cannot insert a non-DEFAULT value into column "${col.name}"`, "428C9");
+      for (let i = 0; i < table.columns.length; i++) {
+        if (provided.has(i)) continue;
+        const col = table.columns[i]!;
+        if (col.generated) continue; // computed below
+        row[i] = columnDefault(env, table, col);
       }
-      row[ci] = coerceToColumn(env, cell, col);
-      provided.add(ci);
-    }
-    for (let i = 0; i < table.columns.length; i++) {
-      if (provided.has(i)) continue;
-      const col = table.columns[i]!;
-      if (col.generated) continue; // computed below
-      row[i] = columnDefault(env, table, col);
-    }
 
-    // BEFORE triggers
-    const fired = fireRowTriggers(env, table, "before", "insert", null, row);
-    if (fired.row === null) continue;
-    const newRow = fired.row;
+      // BEFORE triggers
+      const fired = fireRowTriggers(env, table, "before", "insert", null, row);
+      if (fired.row === null) continue;
+      const newRow = fired.row;
 
-    computeGeneratedColumns(env, table, newRow);
+      computeGeneratedColumns(env, table, newRow);
 
-    // ON CONFLICT arbiter check
-    if (stmt.onConflict) {
-      const arbiters = resolveArbiters(env, table, stmt.onConflict);
-      let conflictIdx: number | null = null;
-      let conflictWhereOk = true;
-      for (const a of arbiters) {
-        if (
-          "columns" in (stmt.onConflict.target ?? {}) &&
-          stmt.onConflict.target &&
-          "columns" in stmt.onConflict.target &&
-          stmt.onConflict.target.where
-        ) {
-          // conflict_target WHERE clause constrains the arbiter (partial indexes)
-          const scope = tableRowScope(env, table, label, newRow);
-          conflictWhereOk = evalPredicate(env, scope, stmt.onConflict.target.where);
+      // ON CONFLICT arbiter check
+      if (stmt.onConflict) {
+        const arbiters = resolveArbiters(env, table, stmt.onConflict);
+        let conflictIdx: number | null = null;
+        let conflictWhereOk = true;
+        for (const a of arbiters) {
+          if (
+            "columns" in (stmt.onConflict.target ?? {}) &&
+            stmt.onConflict.target &&
+            "columns" in stmt.onConflict.target &&
+            stmt.onConflict.target.where
+          ) {
+            // conflict_target WHERE clause constrains the arbiter (partial indexes)
+            const scope = tableRowScope(env, table, label, newRow);
+            conflictWhereOk = evalPredicate(env, scope, stmt.onConflict.target.where);
+          }
+          const idx = findConflict(env, table, a.spec, newRow);
+          if (idx !== null) {
+            conflictIdx = idx;
+            break;
+          }
         }
-        const idx = findConflict(env, table, a.spec, newRow);
-        if (idx !== null) {
-          conflictIdx = idx;
-          break;
+        if (conflictIdx !== null && conflictWhereOk) {
+          if (stmt.onConflict.action === "nothing") continue;
+          const did = applyOnConflictUpdate(
+            env,
+            table,
+            label,
+            conflictIdx,
+            newRow,
+            stmt.onConflict.action.sets,
+            stmt.onConflict.action.where,
+          );
+          if (did) {
+            insertedCount++;
+            insertedRows.push(rows[conflictIdx]!);
+            fireRowTriggers(env, table, "after", "update", null, rows[conflictIdx]!);
+          }
+          continue;
         }
       }
-      if (conflictIdx !== null && conflictWhereOk) {
-        if (stmt.onConflict.action === "nothing") continue;
-        const did = applyOnConflictUpdate(
-          env,
-          table,
-          label,
-          conflictIdx,
-          newRow,
-          stmt.onConflict.action.sets,
-          stmt.onConflict.action.where,
-        );
-        if (did) {
-          insertedCount++;
-          insertedRows.push(rows[conflictIdx]!);
-          fireRowTriggers(env, table, "after", "update", null, rows[conflictIdx]!);
-        }
-        continue;
-      }
+
+      checkNotNull(env, table, newRow);
+      checkChecks(env, table, newRow);
+      checkUnique(env, table, newRow, rows.length);
+      checkForeignKeys(env, table, newRow);
+      rows.push(newRow);
+      indexInsertRow(env, table, rows.length - 1, newRow);
+      insertedCount++;
+      insertedRows.push(newRow);
+      fireRowTriggers(env, table, "after", "insert", null, newRow);
     }
 
-    checkNotNull(env, table, newRow);
-    checkChecks(env, table, newRow);
-    checkUnique(env, table, newRow, rows.length);
-    checkForeignKeys(env, table, newRow);
-    rows.push(newRow);
-    indexInsertRow(env, table, rows.length - 1, newRow);
-    insertedCount++;
-    insertedRows.push(newRow);
-    fireRowTriggers(env, table, "after", "insert", null, newRow);
-  }
-
-  env.ctx.state.changes = insertedCount;
-  if (stmt.returning) {
-    const res = evalReturning(env, table, label, stmt.returning, insertedRows, "INSERT");
-    return { ...res, rowCount: insertedCount };
-  }
-  return commandResult("INSERT", insertedCount);
+    env.ctx.state.changes = insertedCount;
+    if (stmt.returning) {
+      const res = evalReturning(env, table, label, stmt.returning, insertedRows, "INSERT");
+      return { ...res, rowCount: insertedCount };
+    }
+    return commandResult("INSERT", insertedCount);
+  });
 }
 
 // ---------------------------------------------------------------------------

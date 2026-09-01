@@ -45,6 +45,22 @@ function parseQualifiedName(name: string): string[] {
   return parts.map((p) => p.trim()).filter((p) => p.length > 0);
 }
 
+function sequenceSessionKey(seq: SequenceData): string {
+  return `${seq.schema}\0${seq.name}`;
+}
+
+function markSessionCurrval(ctx: EngineCtx, seq: SequenceData, value: bigint): void {
+  ctx.state.sequenceCurrval.set(sequenceSessionKey(seq), value);
+}
+
+function sessionCurrvalDefined(ctx: EngineCtx, seq: SequenceData): boolean {
+  return ctx.state.sequenceCurrval.has(sequenceSessionKey(seq));
+}
+
+function readSessionCurrval(ctx: EngineCtx, seq: SequenceData): bigint {
+  return ctx.state.sequenceCurrval.get(sequenceSessionKey(seq))!;
+}
+
 export function sequenceNextval(ctx: EngineCtx, seq: SequenceData): bigint {
   seq = ctx.state.ensureWritableSequence(seq);
   let next: bigint;
@@ -74,6 +90,7 @@ export function sequenceNextval(ctx: EngineCtx, seq: SequenceData): bigint {
   }
   seq.lastValue = next;
   seq.isCalled = true;
+  markSessionCurrval(ctx, seq, next);
   ctx.state.lastSequence = { schema: seq.schema, name: seq.name };
   return next;
 }
@@ -154,14 +171,14 @@ export function getMiscFunctions(): Map<string, ScalarFn> {
     "currval",
     strict("int8", (ctx, args) => {
       const seq = findSequenceForCall(ctx, argText(ctx, args[0]!));
-      if (!seq.isCalled) {
+      if (!sessionCurrvalDefined(ctx, seq)) {
         throw pgError(
           "object_not_in_prerequisite_state",
           `currval of sequence "${seq.name}" is not yet defined in this session`,
           "55000",
         );
       }
-      return tv("int8", seq.lastValue);
+      return tv("int8", readSessionCurrval(ctx, seq));
     }),
   );
   m.set("lastval", (ctx) => {
@@ -170,10 +187,10 @@ export function getMiscFunctions(): Map<string, ScalarFn> {
       throw pgError("object_not_in_prerequisite_state", "lastval is not yet defined in this session", "55000");
     }
     const seq = ctx.state.findSequence([last.schema, last.name]);
-    if (!seq?.isCalled) {
+    if (!seq || !sessionCurrvalDefined(ctx, seq)) {
       throw pgError("object_not_in_prerequisite_state", "lastval is not yet defined in this session", "55000");
     }
-    return tv("int8", seq.lastValue);
+    return tv("int8", readSessionCurrval(ctx, seq));
   });
   m.set(
     "setval",
@@ -190,6 +207,7 @@ export function getMiscFunctions(): Map<string, ScalarFn> {
       }
       seq.lastValue = value;
       seq.isCalled = isCalled;
+      if (isCalled) markSessionCurrval(ctx, seq, value);
       ctx.state.lastSequence = { schema: seq.schema, name: seq.name };
       return tv("int8", value);
     }),

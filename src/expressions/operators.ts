@@ -1107,16 +1107,31 @@ export function evalUnary(ctx: EngineCtx, op: string, operand: TypedValue): Type
   switch (op) {
     case "-": {
       if (t === "unknown") throw pgError("ambiguous_function", "operator is not unique: - unknown");
-      if (v === null) return tv(t, null);
       if (t === "int2" || t === "int4") {
+        if (v === null) return tv(t, null);
         const neg = -(v as number);
         return tv(t, t === "int2" ? checkInt2(neg) : checkInt4(neg));
       }
-      if (t === "int8") return tv(t, checkInt8(-(v as bigint)));
-      if (t === "float4" || t === "float8") return tv(t, -(v as number));
-      if (t === "numeric") return tv(t, numericNeg(v as Numeric));
-      if (t === "interval") return tv(t, intervalNeg(v as Interval));
-      if (t === "money") return tv(t, -(v as bigint));
+      if (t === "int8") {
+        if (v === null) return tv(t, null);
+        return tv(t, checkInt8(-(v as bigint)));
+      }
+      if (t === "float4" || t === "float8") {
+        if (v === null) return tv(t, null);
+        return tv(t, -(v as number));
+      }
+      if (t === "numeric") {
+        if (v === null) return tv(t, null);
+        return tv(t, numericNeg(v as Numeric));
+      }
+      if (t === "interval") {
+        if (v === null) return tv(t, null);
+        return tv(t, intervalNeg(v as Interval));
+      }
+      if (t === "money") {
+        if (v === null) return tv(t, null);
+        return tv(t, -(v as bigint));
+      }
       throw pgError("undefined_function", `operator does not exist: - ${typeDisplayName(t)}`);
     }
     case "+": {

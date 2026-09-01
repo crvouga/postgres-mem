@@ -160,6 +160,9 @@ export function getJsonFunctions(): Map<string, ScalarFn> {
   m.set("json_typeof", typeofFn);
   m.set("jsonb_typeof", typeofFn);
 
+  const jsonpathArg = (ctx: EngineCtx, arg: TypedValue): string =>
+    arg.t === "jsonpath" ? (arg.v as string) : argText(ctx, arg);
+
   m.set("jsonb_path_query_first", (ctx, args) => {
     if (args.length < 2) {
       throw pgError(
@@ -170,10 +173,22 @@ export function getJsonFunctions(): Map<string, ScalarFn> {
     }
     if (args[0]!.v === null || args[1]!.v === null) return tv("jsonb", null);
     const doc = jsonArg(ctx, args[0]!);
-    const path = args[1]!.t === "jsonpath" ? (args[1]!.v as string) : argText(ctx, args[1]!);
-    const found = jsonpathQueryFirst(doc, path);
+    const found = jsonpathQueryFirst(doc, jsonpathArg(ctx, args[1]!));
     if (found === null) return tv("jsonb", null);
     return outJsonb(found);
+  });
+
+  m.set("jsonb_path_exists", (ctx, args) => {
+    if (args.length < 2) {
+      throw pgError(
+        "undefined_function",
+        `function jsonb_path_exists(${args.map((a) => a.t).join(", ")}) does not exist`,
+        "42883",
+      );
+    }
+    if (args[0]!.v === null || args[1]!.v === null) return tv("bool", null);
+    const doc = jsonArg(ctx, args[0]!);
+    return tv("bool", jsonpathQueryFirst(doc, jsonpathArg(ctx, args[1]!)) !== null);
   });
 
   m.set(

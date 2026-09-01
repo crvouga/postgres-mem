@@ -1107,7 +1107,6 @@
     "jsonb_object_field": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_object_field_text": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_out": "type I/O / wire-protocol support function; not part of the SQL dialect surface",
-    "jsonb_path_exists": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_exists_opr": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_exists_tz": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",
     "jsonb_path_match": "not implemented in this milestone; calls fail loud with SQLSTATE 42883",

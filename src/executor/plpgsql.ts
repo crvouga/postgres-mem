@@ -1,4 +1,4 @@
-import type { Expr, SelectStmt, TypeName } from "../ast/nodes.ts";
+import type { Expr, SelectStmt, Statement, TypeName } from "../ast/nodes.ts";
 import { pgError, unsupported } from "../errors/error.ts";
 import { tokenize } from "../lexer/tokenize.ts";
 import { parse } from "../parser/index.ts";
@@ -9,7 +9,7 @@ import { resolveTypeName } from "../types/resolve.ts";
 import type { Datum, TypedValue, TypeId } from "../types/value.ts";
 import { tv } from "../types/value.ts";
 import { type ExecEnv, type Relation, RowScope } from "./relation.ts";
-import { evalPredicate, evalScalar, executeSelectStmt } from "./select.ts";
+import { evalPredicate, evalScalar, executeSelectStmt, runStatement } from "./select.ts";
 
 /**
  * plpgsql-lite: DECLARE, nested BEGIN/EXCEPTION WHEN others, IF, CASE,
@@ -34,7 +34,8 @@ export type PlStmt =
   | { kind: "raise"; message: string }
   | { kind: "perform"; expr: Expr }
   | { kind: "block"; body: PlStmt[]; handler: PlStmt[] | null }
-  | { kind: "for"; targets: string[]; query: SelectStmt; body: PlStmt[] };
+  | { kind: "for"; targets: string[]; query: SelectStmt; body: PlStmt[] }
+  | { kind: "sql"; text: string };
 
 export interface PlDecl {
   name: string;
@@ -267,6 +268,9 @@ class PlParser {
       this.expectSemi();
       return { kind: "for", targets, query, body };
     }
+    if (this.atKw("update") || this.atKw("insert") || this.atKw("delete")) {
+      return { kind: "sql", text: this.parseSqlTextUntilSemi() };
+    }
     const target: string[] = [];
     const first = this.next();
     if (first.type !== "ident" && first.type !== "quoted_ident") {
@@ -283,6 +287,23 @@ class PlParser {
       throw unsupported(`plpgsql: expected assignment near "${opTok.value}"`);
     }
     return { kind: "assign", target, expr: this.parseExprUntilSemi() };
+  }
+
+  private parseSqlTextUntilSemi(): string {
+    const start = this.peek().pos;
+    let depth = 0;
+    for (;;) {
+      const t = this.peek();
+      if (t.type === "eof") throw unsupported("plpgsql: unterminated statement");
+      if (t.type === "punct" && t.value === "(") depth++;
+      if (t.type === "punct" && t.value === ")") depth--;
+      if (t.type === "punct" && t.value === ";" && depth === 0) {
+        const text = this.src.slice(start, t.pos).trim();
+        this.pos++;
+        return text;
+      }
+      this.pos++;
+    }
   }
 
   private parseExprUntilSemi(): Expr {
@@ -519,6 +540,12 @@ function runStmt(env: ExecEnv, stmt: PlStmt, vars: PlVars, emit: Datum[][] | nul
         }
         runStmts(env, stmt.body, vars, emit, tableNames);
       }
+      return;
+    }
+    case "sql": {
+      const stmts = parse(stmt.text);
+      if (stmts.length !== 1) throw unsupported(`plpgsql SQL statement: ${stmt.text}`);
+      runStatement(env, stmts[0]! as Statement);
       return;
     }
   }

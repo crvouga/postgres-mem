@@ -4,7 +4,9 @@ import { castTo } from "../types/cast.ts";
 import type { Datum } from "../types/value.ts";
 import { compileTriggerBody, type PlStmt } from "./plpgsql.ts";
 import { type ExecEnv, RowScope } from "./relation.ts";
-import { evalPredicate, evalScalar } from "./select.ts";
+import { evalPredicate, evalScalar, runStatement } from "./select.ts";
+import { parse } from "../parser/index.ts";
+import type { Statement } from "../ast/nodes.ts";
 import { setTriggerExecutor, type TriggerEvent } from "./triggers.ts";
 
 /**
@@ -79,6 +81,12 @@ function runTriggerBody(
           if (stmt.handler === null) throw e;
           runTriggerBody(env, table, stmt.handler, vars);
         }
+        break;
+      }
+      case "sql": {
+        const stmts = parse(stmt.text);
+        if (stmts.length !== 1) throw unsupported(`trigger body SQL: ${stmt.text}`);
+        runStatement(env, stmts[0]! as Statement);
         break;
       }
       default:

@@ -26,6 +26,16 @@ export interface CompareCtx {
 
 export const DEFAULT_COMPARE_CTX: CompareCtx = {};
 
+function expectNumber(a: Datum, t: TypeId): number {
+  if (typeof a !== "number") throw pgError("internal", `invalid ${t} datum for comparison`, "XX000");
+  return a;
+}
+
+function expectBigint(a: Datum, t: TypeId): bigint {
+  if (typeof a !== "bigint") throw pgError("internal", `invalid ${t} datum for comparison`, "XX000");
+  return a;
+}
+
 export function datumCompare(t: TypeId, a: Datum, b: Datum, ctx: CompareCtx = DEFAULT_COMPARE_CTX): number {
   if (a === null || b === null) throw pgError("internal", "datumCompare called with null");
   if (isArrayType(t)) return arrayCompare(t, a as PgArray, b as PgArray, ctx);
@@ -40,7 +50,7 @@ export function datumCompare(t: TypeId, a: Datum, b: Datum, ctx: CompareCtx = DE
     case "int4":
     case "oid":
     case "date":
-      return (a as number) - (b as number);
+      return expectNumber(a, t) - expectNumber(b, t);
     case "float4":
     case "float8": {
       // NaN sorts last (greater than everything), like PG
@@ -56,8 +66,8 @@ export function datumCompare(t: TypeId, a: Datum, b: Datum, ctx: CompareCtx = DE
     case "timestamp":
     case "timestamptz":
     case "time": {
-      const ba = a as bigint;
-      const bb = b as bigint;
+      const ba = expectBigint(a, t);
+      const bb = expectBigint(b, t);
       return ba < bb ? -1 : ba > bb ? 1 : 0;
     }
     case "numeric":

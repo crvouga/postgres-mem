@@ -6,6 +6,10 @@
 		{
 			"name": "postgres-mem",
 			"path": "../.."
+		},
+		{
+			"name": "datom-db",
+			"path": "../../../datom-db"
 		}
 	],
 	"settings": {}

@@ -182,4 +182,149 @@ describe("TLP metamorphic fuzz", () => {
       fuzzAssertConfig(12),
     );
   }, 120_000);
+
+  test("FULL OUTER JOIN partitions match on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 8 }),
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 8 }),
+        predicateArb,
+        async (left, right, pred) => {
+          const p = predicateSql(pred, "l.");
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "l", left);
+            await seed([memory, postgres], "r", right);
+
+            const base = "SELECT l.id AS lid, r.id AS rid FROM l FULL OUTER JOIN r ON l.a = r.a";
+            const order = "ORDER BY lid, rid";
+            const full = `${base} ${order}`;
+            const partTrue = `${base} WHERE (${p}) ${order}`;
+            const partFalse = `${base} WHERE NOT (${p}) ${order}`;
+            const partNull = `${base} WHERE (${p}) IS NULL ${order}`;
+
+            const counts = { memory: 0, postgres: 0 };
+            for (const [label, sql, sign] of [
+              ["full", full, -1],
+              ["true", partTrue, 1],
+              ["false", partFalse, 1],
+              ["null", partNull, 1],
+            ] as const) {
+              const memRes = await memory.query(sql);
+              const pgRes = await postgres.query(sql);
+              compareOrReport(`tlp-full-${label}`, sql, { left, right, pred }, memRes, pgRes);
+              counts.memory += sign * memRes.values.length;
+              counts.postgres += sign * pgRes.values.length;
+            }
+            for (const [engine, delta] of Object.entries(counts)) {
+              if (delta !== 0) throw new Error(`full outer TLP broken on ${engine}: delta=${delta}`);
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(10),
+    );
+  }, 120_000);
+
+  test("three-table INNER JOIN chain partitions match on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 1, maxLength: 6 }),
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 1, maxLength: 6 }),
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 1, maxLength: 6 }),
+        predicateArb,
+        async (aRows, bRows, cRows, pred) => {
+          const p = predicateSql(pred, "a.");
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "a", aRows);
+            await seed([memory, postgres], "b", bRows);
+            await seed([memory, postgres], "c", cRows);
+
+            const base =
+              "SELECT a.id AS aid, b.id AS bid, c.id AS cid FROM a INNER JOIN b ON a.id = b.id INNER JOIN c ON b.id = c.id";
+            const order = "ORDER BY aid, bid, cid";
+            const full = `${base} ${order}`;
+            const partTrue = `${base} WHERE (${p}) ${order}`;
+            const partFalse = `${base} WHERE NOT (${p}) ${order}`;
+            const partNull = `${base} WHERE (${p}) IS NULL ${order}`;
+
+            const counts = { memory: 0, postgres: 0 };
+            for (const [label, sql, sign] of [
+              ["full", full, -1],
+              ["true", partTrue, 1],
+              ["false", partFalse, 1],
+              ["null", partNull, 1],
+            ] as const) {
+              const memRes = await memory.query(sql);
+              const pgRes = await postgres.query(sql);
+              compareOrReport(`tlp-3join-${label}`, sql, { aRows, bRows, cRows, pred }, memRes, pgRes);
+              counts.memory += sign * memRes.values.length;
+              counts.postgres += sign * pgRes.values.length;
+            }
+            for (const [engine, delta] of Object.entries(counts)) {
+              if (delta !== 0) throw new Error(`3-join TLP broken on ${engine}: delta=${delta}`);
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(8),
+    );
+  }, 120_000);
+
+  test("DISTINCT count partition (DQP) matches on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 3, maxLength: 15 }),
+        predicateArb,
+        async (rows, pred) => {
+          const p = predicateSql(pred);
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "t", rows);
+
+            const queries = [
+              ["full", "SELECT count(DISTINCT a) AS c FROM t"],
+              ["true", `SELECT count(DISTINCT a) AS c FROM t WHERE (${p})`],
+              ["false", `SELECT count(DISTINCT a) AS c FROM t WHERE NOT (${p})`],
+              ["null", `SELECT count(DISTINCT a) AS c FROM t WHERE (${p}) IS NULL`],
+            ] as const;
+            for (const [label, sql] of queries) {
+              compareOrReport(`dqp-${label}`, sql, { rows, pred }, await memory.query(sql), await postgres.query(sql));
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(10),
+    );
+  }, 120_000);
+
+  test("IN subquery vs INNER JOIN rewrite yields same ids on both engines", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 10 }),
+        fc.uniqueArray(rowArb, { selector: (r) => r.id, minLength: 2, maxLength: 10 }),
+        intArb,
+        async (left, right, threshold) => {
+          await withDatabases(async (memory, postgres) => {
+            await seed([memory, postgres], "l", left);
+            await seed([memory, postgres], "r", right);
+
+            const inSql = `SELECT l.id FROM l WHERE l.a IN (SELECT r.a FROM r WHERE r.a > ${threshold}) ORDER BY 1`;
+            const joinSql = `SELECT DISTINCT l.id FROM l INNER JOIN r ON l.a = r.a WHERE r.a > ${threshold} ORDER BY 1`;
+            const memIn = await memory.query(inSql);
+            const pgIn = await postgres.query(inSql);
+            const memJoin = await memory.query(joinSql);
+            const pgJoin = await postgres.query(joinSql);
+            compareOrReport("in-vs-join-in", inSql, { left, right, threshold }, memIn, pgIn);
+            compareOrReport("in-vs-join-join", joinSql, { left, right, threshold }, memJoin, pgJoin);
+            if (JSON.stringify(memIn.values) !== JSON.stringify(memJoin.values)) {
+              throw new Error("memory IN vs JOIN mismatch");
+            }
+            if (JSON.stringify(pgIn.values) !== JSON.stringify(pgJoin.values)) {
+              throw new Error("postgres IN vs JOIN mismatch");
+            }
+          });
+        },
+      ),
+      fuzzAssertConfig(12),
+    );
+  }, 120_000);
 });

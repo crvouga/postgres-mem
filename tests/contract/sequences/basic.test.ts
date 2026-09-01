@@ -78,6 +78,17 @@ sequenceParity(
 );
 
 sequenceParity(
+  "currval keeps last nextval after setval with is_called false",
+  ["CREATE SEQUENCE s START WITH 4 INCREMENT BY 2"],
+  [
+    { sql: "SELECT nextval('s') AS v", query: true },
+    { sql: "SELECT nextval('s') AS v", query: true },
+    { sql: "SELECT setval('s', 7, false) AS v", query: true },
+    { sql: "SELECT currval('s') AS v", query: true },
+  ],
+);
+
+sequenceParity(
   "lastval returns the most recent nextval across sequences",
   ["CREATE SEQUENCE s1", "CREATE SEQUENCE s2 START 100"],
   [

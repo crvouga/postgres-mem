@@ -386,11 +386,12 @@ export function jsonbCompare(a: JsonbValue, b: JsonbValue): number {
 }
 
 /** jsonb containment (@>). */
-export function jsonbContains(a: JsonbValue, b: JsonbValue): boolean {
+export function jsonbContains(a: JsonbValue, b: JsonbValue, opts?: { allowScalarInArray?: boolean }): boolean {
+  const allowScalarInArray = opts?.allowScalarInArray ?? true;
   if (a.j === "obj" && b.j === "obj") {
     for (const [k, bv] of b.v) {
       const av = a.v.get(k);
-      if (av === undefined || !jsonbContains(av, bv)) return false;
+      if (av === undefined || !jsonbContains(av, bv, { allowScalarInArray: false })) return false;
     }
     return true;
   }
@@ -398,7 +399,7 @@ export function jsonbContains(a: JsonbValue, b: JsonbValue): boolean {
     for (const bv of b.v) {
       let found = false;
       for (const av of a.v) {
-        if (jsonbContains(av, bv)) {
+        if (jsonbContains(av, bv, opts)) {
           found = true;
           break;
         }
@@ -407,8 +408,8 @@ export function jsonbContains(a: JsonbValue, b: JsonbValue): boolean {
     }
     return true;
   }
-  if (a.j === "arr" && b.j !== "arr" && b.j !== "obj") {
-    // scalar contained in top-level array
+  if (allowScalarInArray && a.j === "arr" && b.j !== "arr" && b.j !== "obj") {
+    // top-level only: '[1,2]' @> '1' — not '{"a":[1,2]}' @> '{"a":1}'
     for (const av of a.v) {
       if (av.j === b.j && jsonbEquals(av, b)) return true;
     }

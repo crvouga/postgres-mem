@@ -50,12 +50,5 @@ export const PAR_SECTION: CatalogSection = section("PAR", "Parser & grammar", tr
   ["param-01", "Positional $n parameters"],
   ["depth-01", "Deeply nested parentheses"],
   ["reserved-01", "Reserved words misused as identifiers error"],
-  [
-    "neg-01",
-    "Nested unary minus on numeric literals",
-    D,
-    "memory folds repeated unary minus into the literal text and rejects it; PostgreSQL evaluates - -5 to 5",
-    undefined,
-    "unary-minus-folding",
-  ],
+  ["neg-01", "Nested unary minus on numeric literals"],
 ]);

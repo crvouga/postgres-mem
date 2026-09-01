@@ -33,3 +33,9 @@ parity(
 parity("jsonb_path_query_first root", [], `SELECT jsonb_path_query_first('{"a":1}'::jsonb, '$'::jsonpath) AS v`);
 
 parity("jsonpath cast from text", [], `SELECT jsonb_path_query_first('{"a":1}'::jsonb, ('$.a')::jsonpath) AS v`);
+
+parity("jsonb_path_exists present key", [], `SELECT jsonb_path_exists('{"a":1,"b":2}'::jsonb, '$."b"') AS ex`);
+
+parity("jsonb_path_exists missing key", [], `SELECT jsonb_path_exists('{"a":1}'::jsonb, '$.missing') AS ex`);
+
+parity("jsonb_path_exists json null value", [], `SELECT jsonb_path_exists('{"a":null}'::jsonb, '$.a') AS ex`);

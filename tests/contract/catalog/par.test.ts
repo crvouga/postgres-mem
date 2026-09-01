@@ -131,10 +131,7 @@ runCatalog(PAR_SECTION, [
   },
   {
     id: "PAR-neg-01",
-    kind: "divergence",
-    fn: (db) => {
-      expect(() => db.query("SELECT - -5 AS v")).toThrow(/invalid input syntax/);
-      expect(() => db.query("SELECT -(-5) AS v")).toThrow(/invalid input syntax/);
-    },
+    kind: "parity",
+    sql: "SELECT - -5 AS v",
   },
 ]);

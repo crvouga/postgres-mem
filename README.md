@@ -223,6 +223,7 @@ Fuzz / property tests use a fixed seed (`0x5a17e0e1`) and print it on failure:
 
 ```bash
 bun test tests/fuzz
+bun run test:pbt:random -- 50   # N random seeds, fail fast on first mismatch
 POSTGRES_MEM_FUZZ_SEED=12345 bun test tests/fuzz
 POSTGRES_MEM_FUZZ_SEED=12345 POSTGRES_MEM_FUZZ_PATH='0:1' bun test tests/fuzz  # exact replay
 ```
@@ -282,7 +283,7 @@ Parity is proven by differential contracts against real PostgreSQL — default o
 
 ```bash
 bun install
-bun run ci:local               # same gates as GitHub Actions CI (except publish)
+bun run check:full               # same gates as GitHub Actions CI (except publish)
 bun run check                  # format + lint + typecheck + postgres-compat suite
 bun run format                 # write Biome formatting
 bun run lint                   # Biome lint
@@ -317,7 +318,7 @@ PR titles must also follow Conventional Commits (enforced in CI). Prefer squash 
 Local checks:
 
 ```bash
-bun run ci:local             # commitlint + quality + tests + browser + benchmarks
+bun run check:full             # commitlint + quality + tests + browser + benchmarks
 # dry-run needs a GitHub token for API calls; CI publish uses Trusted Publishing (no NPM_TOKEN)
 bun run release:dry-run
 ```

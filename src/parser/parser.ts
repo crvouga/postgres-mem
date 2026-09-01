@@ -3310,7 +3310,10 @@ export class Parser {
         this.pos++;
         const operand = this.parseUnary();
         if (operand.type === "number_lit") {
-          return t.value === "-" ? { type: "number_lit", raw: `-${operand.raw}` } : operand;
+          if (t.value === "+") return operand;
+          const raw = operand.raw;
+          if (raw.startsWith("-")) return { type: "number_lit", raw: raw.slice(1) };
+          return { type: "number_lit", raw: `-${raw}` };
         }
         return { type: "unop", op: t.value, operand };
       }

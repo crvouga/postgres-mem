@@ -19,7 +19,7 @@ import { pgError } from "../errors/error.ts";
 import { conjunctions, joinKeyFromRow, rowsMatchEqKeys, tryIndexedFromItem } from "../planner/access.ts";
 import { bindValueToTyped, datumToJs } from "../api/bind.ts";
 import type { EvalScope } from "../expressions/eval.ts";
-import { evalExpr } from "../expressions/eval.ts";
+import { evalAsPredicate, evalExpr, checkBoolExprType } from "../expressions/eval.ts";
 import { createAggregate, isAggregateName, isOrderedSetAggregate, unifyAggType } from "../functions/aggregates.ts";
 import { getSrfFunctions, isSrfName } from "../functions/srf.ts";
 import { catalogRelation } from "../schema/catalog.ts";
@@ -137,7 +137,14 @@ export function makeEvalScope(env: ExecEnv, scope: RowScope | null, extras?: Sco
       return { type: t === UNKNOWN ? "text" : t, values: rel.rows.map((r) => r[0] ?? null) };
     },
     aggValue(node) {
-      return extras?.aggMap?.get(node);
+      const map = extras?.aggMap;
+      if (!map) return undefined;
+      const direct = map.get(node);
+      if (direct !== undefined) return direct;
+      for (const [call, value] of map) {
+        if (exprEq(call, node)) return value;
+      }
+      return undefined;
     },
     windowValue(node) {
       if (!node.over) return undefined;
@@ -161,11 +168,15 @@ export function evalScalar(env: ExecEnv, scope: RowScope | null, e: Expr, extras
 }
 
 /** SQL three-valued predicate: null → false */
-export function evalPredicate(env: ExecEnv, scope: RowScope | null, e: Expr, extras?: ScopeExtras): boolean {
+export function evalPredicate(
+  env: ExecEnv,
+  scope: RowScope | null,
+  e: Expr,
+  extras?: ScopeExtras,
+  kind = "WHERE",
+): boolean {
   const v = evalScalar(env, scope, e, extras);
-  if (v.v === null) return false;
-  const b = castTo(env.ctx, v, "bool", {});
-  return b.v === true;
+  return evalAsPredicate(env.ctx, kind, v);
 }
 
 // ---------------------------------------------------------------------------
@@ -905,7 +916,7 @@ function combineJoin(
     for (let i = 0; i < left.columns.length; i++) row.push(lrow[i] ?? null);
     for (let i = 0; i < right.columns.length; i++) row.push(rrow[i] ?? null);
     const jscope = new RowScope(columns, row, env.outer, rangeVars);
-    return evalPredicate(env, jscope, on);
+    return evalPredicate(env, jscope, on, undefined, "ON");
   };
 
   const useHashJoin = kind !== "cross" && hashLeftIdxs.length > 0;
@@ -1033,6 +1044,12 @@ interface AggCollector {
   aggs: FuncCall[];
   windows: FuncCall[];
   groupings: Expr[];
+}
+
+function exprHasAggregateCall(e: Expr | null | undefined): boolean {
+  const collector: AggCollector = { aggs: [], windows: [], groupings: [] };
+  collectCalls(e, collector);
+  return collector.aggs.length > 0;
 }
 
 function collectCalls(e: Expr | null | undefined, out: AggCollector): void {
@@ -1198,6 +1215,213 @@ function groupDefMatches(def: GroupExprDef, e: Expr, columns: Relation["columns"
   return exprEq(def.expr, e);
 }
 
+function groupingErrorForColref(parts: string[], columns: Relation["columns"]): never {
+  const idx = resolveColIdx(columns, parts);
+  let label: string;
+  if (idx !== null) {
+    const c = columns[idx]!;
+    label = c.table ? `${c.table}.${c.name}` : c.name;
+  } else {
+    label = parts.join(".");
+  }
+  throw pgError(
+    "grouping_error",
+    `column "${label}" must appear in the GROUP BY clause or be used in an aggregate function`,
+    "42803",
+  );
+}
+
+function isGroupingExpr(e: Expr, groupDefs: GroupExprDef[], columns: Relation["columns"]): boolean {
+  return groupDefs.some((d) => groupDefMatches(d, e, columns));
+}
+
+/** reject bare source columns outside GROUP BY / aggregates before execution */
+function validateGroupedExpr(
+  e: Expr | null | undefined,
+  groupDefs: GroupExprDef[],
+  columns: Relation["columns"],
+  inAgg: boolean,
+): void {
+  if (!e || typeof e !== "object") return;
+  if (e.type === "subquery_expr") return;
+
+  if (!inAgg && isGroupingExpr(e, groupDefs, columns)) return;
+
+  switch (e.type) {
+    case "null_lit":
+    case "string_lit":
+    case "number_lit":
+    case "bool_lit":
+    case "bitstring_lit":
+    case "param":
+    case "default_expr":
+      return;
+    case "colref":
+      if (!inAgg) {
+        if (resolveColIdx(columns, e.parts) === null) return;
+        groupingErrorForColref(e.parts, columns);
+      }
+      return;
+    case "grouping_func":
+      for (const a of e.args) validateGroupedExpr(a, groupDefs, columns, inAgg);
+      return;
+    case "func": {
+      const name = e.name[e.name.length - 1]!;
+      if (e.over) {
+        for (const a of e.args) validateGroupedExpr(a, groupDefs, columns, false);
+        if (e.filter) validateGroupedExpr(e.filter, groupDefs, columns, false);
+        for (const p of e.over.partitionBy ?? []) validateGroupedExpr(p, groupDefs, columns, false);
+        for (const ob of e.over.orderBy ?? []) validateGroupedExpr(ob.expr, groupDefs, columns, false);
+        return;
+      }
+      if (isAggregateName(name)) {
+        for (const a of e.args) validateGroupedExpr(a, groupDefs, columns, true);
+        if (e.filter) validateGroupedExpr(e.filter, groupDefs, columns, true);
+        for (const ob of e.orderBy ?? []) validateGroupedExpr(ob.expr, groupDefs, columns, true);
+        return;
+      }
+      for (const a of e.args) validateGroupedExpr(a, groupDefs, columns, inAgg);
+      if (e.filter) validateGroupedExpr(e.filter, groupDefs, columns, inAgg);
+      for (const ob of e.orderBy ?? []) validateGroupedExpr(ob.expr, groupDefs, columns, inAgg);
+      return;
+    }
+    case "binop":
+      validateGroupedExpr(e.left, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.right, groupDefs, columns, inAgg);
+      return;
+    case "unop":
+      validateGroupedExpr(e.operand, groupDefs, columns, inAgg);
+      return;
+    case "cast":
+      validateGroupedExpr(e.expr, groupDefs, columns, inAgg);
+      return;
+    case "collate":
+      validateGroupedExpr(e.expr, groupDefs, columns, inAgg);
+      return;
+    case "case": {
+      if (e.operand) validateGroupedExpr(e.operand, groupDefs, columns, inAgg);
+      for (const w of e.whens) {
+        validateGroupedExpr(w.when, groupDefs, columns, inAgg);
+        validateGroupedExpr(w.then, groupDefs, columns, inAgg);
+      }
+      if (e.elseExpr) validateGroupedExpr(e.elseExpr, groupDefs, columns, inAgg);
+      return;
+    }
+    case "in_expr":
+      validateGroupedExpr(e.left, groupDefs, columns, inAgg);
+      if (e.list) {
+        for (const r of e.list) validateGroupedExpr(r, groupDefs, columns, inAgg);
+      }
+      return;
+    case "between":
+      validateGroupedExpr(e.left, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.low, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.high, groupDefs, columns, inAgg);
+      return;
+    case "is_null":
+    case "bool_test":
+      validateGroupedExpr(e.expr, groupDefs, columns, inAgg);
+      return;
+    case "is_distinct":
+      validateGroupedExpr(e.left, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.right, groupDefs, columns, inAgg);
+      return;
+    case "row":
+      for (const el of e.items) validateGroupedExpr(el, groupDefs, columns, inAgg);
+      return;
+    case "array_ctor":
+      for (const el of e.items) validateGroupedExpr(el, groupDefs, columns, inAgg);
+      return;
+    case "array_query":
+      return;
+    case "subscript":
+      validateGroupedExpr(e.base, groupDefs, columns, inAgg);
+      for (const idx of e.indexes) {
+        if (idx.lower) validateGroupedExpr(idx.lower, groupDefs, columns, inAgg);
+        if (idx.upper) validateGroupedExpr(idx.upper, groupDefs, columns, inAgg);
+      }
+      return;
+    case "field_select":
+      validateGroupedExpr(e.base, groupDefs, columns, inAgg);
+      return;
+    case "at_time_zone":
+      validateGroupedExpr(e.expr, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.zone, groupDefs, columns, inAgg);
+      return;
+    case "like":
+      validateGroupedExpr(e.left, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.pattern, groupDefs, columns, inAgg);
+      if (e.escape) validateGroupedExpr(e.escape, groupDefs, columns, inAgg);
+      return;
+    case "position":
+      validateGroupedExpr(e.needle, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.haystack, groupDefs, columns, inAgg);
+      return;
+    case "substring_sql":
+      validateGroupedExpr(e.source, groupDefs, columns, inAgg);
+      if (e.from) validateGroupedExpr(e.from, groupDefs, columns, inAgg);
+      if (e.forLen) validateGroupedExpr(e.forLen, groupDefs, columns, inAgg);
+      if (e.similar) validateGroupedExpr(e.similar, groupDefs, columns, inAgg);
+      if (e.escape) validateGroupedExpr(e.escape, groupDefs, columns, inAgg);
+      return;
+    case "overlay":
+      validateGroupedExpr(e.source, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.placing, groupDefs, columns, inAgg);
+      validateGroupedExpr(e.from, groupDefs, columns, inAgg);
+      if (e.forLen) validateGroupedExpr(e.forLen, groupDefs, columns, inAgg);
+      return;
+    case "trim":
+      validateGroupedExpr(e.source, groupDefs, columns, inAgg);
+      if (e.chars) validateGroupedExpr(e.chars, groupDefs, columns, inAgg);
+      return;
+    case "extract":
+      validateGroupedExpr(e.source, groupDefs, columns, inAgg);
+      return;
+    default:
+      return;
+  }
+}
+
+function validateGroupedTargets(
+  targets: SelectTarget[],
+  groupDefs: GroupExprDef[],
+  columns: Relation["columns"],
+): void {
+  for (const t of targets) {
+    if (t.expr.type === "star") {
+      if (t.expr.table) {
+        const label = t.expr.table[t.expr.table.length - 1]!;
+        for (const c of columns) {
+          if (c.table === label) {
+            const parts: string[] = c.table ? [c.table, c.name] : [c.name];
+            validateGroupedExpr({ type: "colref", parts }, groupDefs, columns, false);
+          }
+        }
+      } else {
+        for (const c of columns) {
+          if (!c.hidden) {
+            const parts: string[] = c.table ? [c.table, c.name] : [c.name];
+            validateGroupedExpr({ type: "colref", parts }, groupDefs, columns, false);
+          }
+        }
+      }
+      continue;
+    }
+    validateGroupedExpr(t.expr, groupDefs, columns, false);
+  }
+}
+
+function validateGroupedQuery(
+  core: SelectCore,
+  groupDefs: GroupExprDef[],
+  columns: Relation["columns"],
+  orderBy: OrderByItem[] = [],
+): void {
+  validateGroupedTargets(core.targets, groupDefs, columns);
+  if (core.having) validateGroupedExpr(core.having, groupDefs, columns, false);
+  for (const ob of orderBy) validateGroupedExpr(ob.expr, groupDefs, columns, false);
+}
+
 /** one output row context: either a plain source row or an aggregated group */
 interface RowCtx {
   scope: RowScope;
@@ -1208,7 +1432,7 @@ interface RowCtx {
   activeSet: boolean[] | null;
 }
 
-function computeAggregate(env: ExecEnv, call: FuncCall, rows: RowScope[]): TypedValue {
+function computeAggregate(env: ExecEnv, call: FuncCall, rows: RowScope[], probeScope: RowScope | null): TypedValue {
   const ctx = env.ctx;
   const name = call.name[call.name.length - 1]!;
   const orderedSet = isOrderedSetAggregate(name);
@@ -1310,6 +1534,17 @@ function computeAggregate(env: ExecEnv, call: FuncCall, rows: RowScope[]): Typed
       t = unifyAggType(t, tuple.args[i]!.t);
     }
     argTypes.push(t);
+  }
+  if (effective.length === 0 && probeScope !== null && argCount > 0) {
+    const scope = makeEvalScope(env, probeScope);
+    for (let i = 0; i < argCount; i++) {
+      if (argTypes[i] !== UNKNOWN) continue;
+      if (call.star) continue;
+      const expr = orderedSet && i >= call.args.length ? orderBy[0]!.expr : (call.args[i] ?? orderBy[0]!.expr);
+      if (!expr) continue;
+      const v = evalExpr(ctx, scope, expr);
+      argTypes[i] = v.t === UNKNOWN ? "text" : v.t;
+    }
   }
 
   const acc = createAggregate(ctx, name, argTypes);
@@ -1670,7 +1905,30 @@ function expandTargets(core: SelectCore, columns: Relation["columns"]): ProjItem
   return items;
 }
 
-export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByItem[]): Relation {
+/** Plan-time boolean typing for WHERE/HAVING (PostgreSQL rejects non-bool before scanning). */
+function checkPredicateType(
+  env: ExecEnv,
+  columns: Relation["columns"],
+  rangeVars: Set<string>,
+  e: Expr,
+  kind: string,
+  extras?: ScopeExtras,
+): void {
+  const probe = new RowScope(
+    columns,
+    columns.map(() => null),
+    env.outer,
+    rangeVars,
+  );
+  checkBoolExprType(env.ctx, makeEvalScope(env, probe, extras), e, kind);
+}
+
+export function executeCore(
+  env0: ExecEnv,
+  core: SelectCore,
+  orderBy: OrderByItem[],
+  opts?: { hasLimit?: boolean },
+): Relation {
   const env = env0;
   const ctx = env.ctx;
 
@@ -1684,6 +1942,7 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
   // 2. WHERE
   let srcRows = source.rel.rows;
   if (core.where) {
+    checkPredicateType(env, srcCols, rangeVars, core.where, "WHERE");
     if (core.from.length === 1) {
       const indexed = tryIndexedFromItem(env, core.from[0]!, core.where);
       if (indexed !== null) {
@@ -1785,7 +2044,7 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
         const aggMap = new Map<FuncCall, TypedValue>();
         const groupScopes = rows.map((r) => rowScope(r));
         for (const agg of collector.aggs) {
-          aggMap.set(agg, computeAggregate(env, agg, groupScopes));
+          aggMap.set(agg, computeAggregate(env, agg, groupScopes, repScope));
         }
         ctxs.push({
           scope: repScope,
@@ -1832,10 +2091,23 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
       : undefined,
   });
 
+  if (core.having) {
+    // Empty grouped input: aggregate HAVING is vacuous (PG returns 0 rows); literals still type-check.
+    if (ctxs.length > 0) {
+      checkPredicateType(env, srcCols, rangeVars, core.having, "HAVING", extrasFor(ctxs[0]!));
+    } else if (!exprHasAggregateCall(core.having)) {
+      checkPredicateType(env, srcCols, rangeVars, core.having, "HAVING");
+    }
+  }
+
+  if (grouped) {
+    validateGroupedQuery(core, groupDefs, srcCols, orderBy);
+  }
+
   // 5. HAVING
   if (core.having) {
     const having = core.having;
-    ctxs = ctxs.filter((rc) => evalPredicate(env, rc.scope, having, extrasFor(rc)));
+    ctxs = ctxs.filter((rc) => evalPredicate(env, rc.scope, having, extrasFor(rc), "HAVING"));
   }
 
   // 6. window functions
@@ -1888,6 +2160,16 @@ export function executeCore(env0: ExecEnv, core: SelectCore, orderBy: OrderByIte
     projItems.push(item);
     sortSpecs.push(spec);
     orderExprs.push({ item, spec });
+  }
+
+  // Plain DISTINCT (no LIMIT): PG sorts by ORDER BY keys plus remaining select-list columns, then Unique.
+  if (core.distinct && !core.distinct.on && sortSpecs.length > 0 && !opts?.hasLimit) {
+    const used = new Set(sortSpecs.map((s) => s.colIdx));
+    for (let i = 0; i < visibleCount; i++) {
+      if (projItems[i]!.hidden || used.has(i)) continue;
+      sortSpecs.push({ colIdx: i, dir: "asc", nullsFirst: false });
+      used.add(i);
+    }
   }
 
   // DISTINCT ON hidden columns
@@ -2112,7 +2394,7 @@ export function executeSelectStmt(env0: ExecEnv, stmt: SelectStmt): Relation {
   const env = applyWith(env0, stmt.with);
   let rel: Relation;
   if (stmt.body.type === "select_core") {
-    rel = executeCore(env, stmt.body, stmt.orderBy);
+    rel = executeCore(env, stmt.body, stmt.orderBy, { hasLimit: stmt.limit !== null });
   } else {
     rel = executeBody(env, stmt.body);
     const specs = outputOrderSpecs(env, rel, stmt.orderBy);

@@ -70,6 +70,11 @@ export type StatefulOp =
   | { kind: "savepoint" }
   | { kind: "rollback_to" }
   | { kind: "release" }
+  | { kind: "upsert"; a: number | null; b: string | null; c: number | null; mode: "nothing" | "update" }
+  | { kind: "returning_insert"; a: number | null; b: string | null; c: number | null }
+  | { kind: "returning_update"; pick: number }
+  | { kind: "update_from"; pick: number }
+  | { kind: "delete_using"; pick: number }
   | { kind: "checkpoint" };
 
 /** Mixed vocabulary: stateful ops plus occasional DDL (outside transactions only). */
@@ -82,7 +87,12 @@ export type MixedOp =
   | { kind: "drop_view" }
   | { kind: "create_matview" }
   | { kind: "refresh_matview" }
-  | { kind: "create_partial_index" };
+  | { kind: "create_partial_index" }
+  | { kind: "upsert"; a: number | null; b: string | null; c: number | null; mode: "nothing" | "update" }
+  | { kind: "returning_insert"; a: number | null; b: string | null; c: number | null }
+  | { kind: "returning_update"; pick: number }
+  | { kind: "update_from"; pick: number }
+  | { kind: "delete_using"; pick: number };
 
 interface SavepointFrame {
   name: string;
@@ -151,11 +161,22 @@ export const OUTCOME_KINDS = new Set<MixedOp["kind"]>([
   "create_matview",
   "refresh_matview",
   "create_partial_index",
+  "upsert",
+  "returning_insert",
+  "returning_update",
+  "update_from",
+  "delete_using",
 ]);
 
 export const READ_ONLY_QUERY_KINDS = new Set<MixedOp["kind"]>(["select_scan", "select_agg"]);
 
-export const QUERY_KINDS = READ_ONLY_QUERY_KINDS;
+/** Ops executed via query() rather than exec(); includes mutating RETURNING statements. */
+export const QUERY_KINDS = new Set<MixedOp["kind"]>([
+  "select_scan",
+  "select_agg",
+  "returning_insert",
+  "returning_update",
+]);
 
 function scanColumns(state: SimState): string[] {
   const cols = ["id", "a", "b"];
@@ -322,6 +343,52 @@ export function resolveOp(op: MixedOp, state: SimState): ResolvedOp | null {
     state.hasPartialIndex = true;
     return { sql: "CREATE INDEX t_partial_idx ON t (a) WHERE a > 0", isQuery: false };
   }
+  if (op.kind === "upsert") {
+    const id = state.nextId++;
+    if (!state.liveIds.includes(id)) state.liveIds.push(id);
+    state.liveIds.sort((x, y) => x - y);
+    const cols =
+      state.schemaKind === "default"
+        ? `(${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${sqlLiteral(op.c)})`
+        : `(${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)})`;
+    const conflict =
+      op.mode === "nothing"
+        ? " ON CONFLICT (id) DO NOTHING"
+        : ` ON CONFLICT (id) DO UPDATE SET a = EXCLUDED.a, b = EXCLUDED.b`;
+    const insertCols = state.schemaKind === "default" ? "(id, a, b, c)" : "(id, a, b)";
+    return { sql: `INSERT INTO t ${insertCols} VALUES ${cols}${conflict}`, isQuery: false };
+  }
+  if (op.kind === "returning_insert") {
+    const id = state.nextId++;
+    state.liveIds.push(id);
+    const vals =
+      state.schemaKind === "default"
+        ? `(${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)}, ${sqlLiteral(op.c)})`
+        : `(${id}, ${sqlLiteral(op.a)}, ${sqlLiteral(op.b)})`;
+    const insertCols = state.schemaKind === "default" ? "(id, a, b, c)" : "(id, a, b)";
+    return { sql: `INSERT INTO t ${insertCols} VALUES ${vals} RETURNING id, a`, isQuery: true };
+  }
+  if (op.kind === "returning_update") {
+    const id = pickId(state, op.pick);
+    if (id === null) return null;
+    return { sql: `UPDATE t SET a = a + 1 WHERE id = ${id} RETURNING id, a`, isQuery: true };
+  }
+  if (op.kind === "update_from") {
+    const id = pickId(state, op.pick);
+    if (id === null || state.liveIds.length < 2) return null;
+    const other = state.liveIds.find((x) => x !== id);
+    if (other === undefined) return null;
+    return {
+      sql: `UPDATE t SET b = 'from' FROM t AS src WHERE t.id = ${id} AND src.id = ${other}`,
+      isQuery: false,
+    };
+  }
+  if (op.kind === "delete_using") {
+    const id = pickId(state, op.pick);
+    if (id === null) return null;
+    state.liveIds = state.liveIds.filter((x) => x !== id);
+    return { sql: `DELETE FROM t USING t AS u WHERE t.id = ${id} AND u.id = t.id`, isQuery: false };
+  }
   if (op.kind === "checkpoint") {
     return { sql: "<checkpoint>", isQuery: false };
   }
@@ -371,6 +438,28 @@ export const statefulOpArb: fc.Arbitrary<StatefulOp> = fc.oneof(
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("savepoint" as const) }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("rollback_to" as const) }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("release" as const) }) },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      kind: fc.constant("upsert" as const),
+      a: nullableIntArb,
+      b: nullableTextArb,
+      c: nullableRealArb,
+      mode: fc.constantFrom("nothing" as const, "update" as const),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      kind: fc.constant("returning_insert" as const),
+      a: nullableIntArb,
+      b: nullableTextArb,
+      c: nullableRealArb,
+    }),
+  },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("returning_update" as const), pick: pickArb }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("update_from" as const), pick: pickArb }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("delete_using" as const), pick: pickArb }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("checkpoint" as const) }) },
 );
 
@@ -384,6 +473,28 @@ export const mixedOpArb: fc.Arbitrary<MixedOp> = fc.oneof(
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_matview" as const) }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("refresh_matview" as const) }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("create_partial_index" as const) }) },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      kind: fc.constant("upsert" as const),
+      a: nullableIntArb,
+      b: nullableTextArb,
+      c: nullableRealArb,
+      mode: fc.constantFrom("nothing" as const, "update" as const),
+    }),
+  },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      kind: fc.constant("returning_insert" as const),
+      a: nullableIntArb,
+      b: nullableTextArb,
+      c: nullableRealArb,
+    }),
+  },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("returning_update" as const), pick: pickArb }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("update_from" as const), pick: pickArb }) },
+  { weight: 1, arbitrary: fc.record({ kind: fc.constant("delete_using" as const), pick: pickArb }) },
   { weight: 4, arbitrary: fc.record({ kind: fc.constant("checkpoint" as const) }) },
 );
 

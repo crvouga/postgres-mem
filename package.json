@@ -51,6 +51,8 @@
     "test": "bun test tests/contract tests/fuzz tests/harness",
     "test:contract": "bun test tests/contract",
     "test:fuzz": "bun test tests/fuzz",
+    "test:pbt": "bun test tests/fuzz",
+    "test:pbt:random": "bun run scripts/pbt-random.ts",
     "test:fuzz:soak": "POSTGRES_MEM_STATEFUL_STEPS=${POSTGRES_MEM_STATEFUL_STEPS:-48} POSTGRES_MEM_FUZZ_RUNS=${POSTGRES_MEM_FUZZ_RUNS:-40} bun test tests/fuzz/stateful.test.ts tests/fuzz/metamorphic tests/fuzz/robustness.test.ts tests/fuzz/corpus.test.ts",
     "test:metamorphic": "bun test tests/fuzz/metamorphic",
     "test:dst": "bun test tests/fuzz/stateful.test.ts tests/fuzz/corpus.test.ts",
@@ -76,7 +78,7 @@
     "lint:fix": "biome lint --write --error-on-warnings .",
     "clean": "rm -rf dist",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test:postgres-compat",
-    "ci:local": "bun run scripts/ci-local.ts",
+    "check:full": "bun run scripts/ci-local.ts",
     "commitlint": "commitlint --edit",
     "verify-package": "bun run scripts/verify-package.ts",
     "release:preflight": "bun run scripts/release-preflight.ts",
@@ -88,7 +90,7 @@
     "npm:seed": "bun run scripts/seed-npm.ts",
     "gh": "open https://github.com/crvouga/postgres-mem/actions",
     "example:react-vite": "cd examples/react-vite && bun install && bun run dev",
-    "fc": "clear && bun format && bun ci:local",
+    "fc": "clear && bun format && bun check:full",
     "test:postgres-native": "bun run scripts/run-postgres-native-tests.ts"
   },
   "devDependencies": {

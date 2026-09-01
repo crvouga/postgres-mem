@@ -312,6 +312,8 @@ export class DatabaseState {
   inTransaction = false;
   /** most recent sequence touched by nextval/setval, for lastval() */
   lastSequence: { schema: string; name: string } | null = null;
+  /** Session currval per sequence; absent entry means currval is undefined. */
+  sequenceCurrval = new Map<string, bigint>();
 
   constructor(prng: Prng, clock: Clock) {
     this.prng = prng;
@@ -522,6 +524,7 @@ export class DatabaseState {
     s.changes = this.changes;
     s.inTransaction = this.inTransaction;
     s.lastSequence = this.lastSequence ? { ...this.lastSequence } : null;
+    s.sequenceCurrval = new Map(this.sequenceCurrval);
     s.oidCounter = this.oidCounter;
     return s;
   }
@@ -537,6 +540,7 @@ export class DatabaseState {
     s.changes = this.changes;
     s.inTransaction = this.inTransaction;
     s.lastSequence = this.lastSequence ? { ...this.lastSequence } : null;
+    s.sequenceCurrval = new Map(this.sequenceCurrval);
     s.oidCounter = this.oidCounter;
     return s;
   }
@@ -614,6 +618,7 @@ export class DatabaseState {
     this.prepared = other.prepared;
     this.changes = other.changes;
     this.lastSequence = other.lastSequence;
+    this.sequenceCurrval = other.sequenceCurrval;
     this.oidCounter = other.oidCounter;
   }
 
