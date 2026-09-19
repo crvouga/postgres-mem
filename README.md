@@ -1,5 +1,14 @@
 # postgres-mem
 
+> [!WARNING]
+> **Archived.** `@crvouga/postgres-mem` is no longer maintained here. Development continues in the Mockingbird monorepo as [`@crvouga/mockingbird-service-postgres`](https://www.npmjs.com/package/@crvouga/mockingbird-service-postgres) ([source](https://github.com/crvouga/mockingbird/tree/main/packages/service/postgres)).
+>
+> ```bash
+> npm uninstall @crvouga/postgres-mem && npm install @crvouga/mockingbird-service-postgres
+> ```
+>
+> Then replace `@crvouga/postgres-mem` with `@crvouga/mockingbird-service-postgres` in your imports; the API is the same.
+
 [npm](https://www.npmjs.com/package/@crvouga/postgres-mem) · [GitHub](https://github.com/crvouga/postgres-mem)
 
 Pure TypeScript, completely in-memory PostgreSQL implementation aiming for **PostgreSQL 18 SQL dialect parity** (same statements → same results).
